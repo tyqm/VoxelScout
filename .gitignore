@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.env
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Medical images and datasets
+data/*
+!data/README.md
+*.nii
+*.nii.gz
+*.dcm
+
+# Training artifacts
+outputs/
+checkpoints/
+runs/
+wandb/
+*.pt
+*.pth
+*.ckpt
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
