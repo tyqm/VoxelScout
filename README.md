@@ -1,4 +1,4 @@
-# VoxelScout
+# VoxelScout:
 ## Coarse-to-Fine 3D Object Localisation and Segmentation
 Developed a coarse-to-fine 3D perception pipeline on publicly available volumetric CT data, combining low-resolution object localisation with high-resolution ROI segmentation.
 
