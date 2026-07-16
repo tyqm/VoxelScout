@@ -56,6 +56,12 @@ The Streamlit application currently provides:
 
 When no mask is available, VoxelScout still provides CT browsing but deliberately disables labels and 3D reconstruction. Automatic segmentation is a separate future milestone.
 
+## Requirements and design
+
+The stakeholder analysis, corrected terminology, CR1–CR12 traceability, safety boundaries and system architecture are maintained in [docs/system_design.md](docs/system_design.md).
+
+The current GUI implements all requirements for trusted NIfTI CT/mask pairs. DICOM import and automatic segmentation remain explicitly planned extensions.
+
 ## Run locally
 
 Activate the verified environment and update the project:
