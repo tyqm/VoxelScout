@@ -14,12 +14,16 @@ dependencies = [
   "nibabel>=5.3,<6",
   "numpy>=2.0,<3",
   "matplotlib>=3.10,<4",
+  "SimpleITK>=2.5,<3",
+  "scipy>=1.15,<2",
+  "scikit-image>=0.25,<1",
 ]
 
 [project.scripts]
 voxelscout-inspect = "voxelscout.inspect_case:main"
 voxelscout-inventory = "voxelscout.build_inventory:main"
 voxelscout-preprocess = "voxelscout.preprocess_case:main"
+voxelscout-viewer = "voxelscout.viewer:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

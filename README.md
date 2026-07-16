@@ -4,7 +4,8 @@
 
 VoxelScout is a learning and research project for building a coarse-to-fine 3D perception pipeline on publicly available volumetric CT data. The initial dataset is VerSe 2020.
 
-> Status: one real validation case has been inspected successfully; dataset inventory is the current milestone.
+> Status: the dataset inspection/preprocessing workflow and an integrated local
+> spinal CT desktop viewer are available. Model training remains a later milestone.
 
 ## Target outcome
 
@@ -37,6 +38,35 @@ CUDA:    False
 ```
 
 The local machine is for preprocessing, visualization, tests, and small CPU smoke runs. Full 3D training will use an NVIDIA GPU environment later.
+
+## Launch the desktop viewer
+
+```powershell
+voxelscout-viewer
+```
+
+The viewer implements the current user-facing workflow in one local application:
+
+- import a NIfTI CT file or a folder containing a DICOM series;
+- automatically reorient the volume and apply a CT bone window for viewing;
+- show linked sagittal, coronal, and axial slices;
+- automatically match a VerSe-style `*_seg-vert_msk.nii.gz` companion label, or
+  load another aligned NIfTI label manually;
+- list, select, locate, and highlight individual labelled vertebrae;
+- show a rotatable 3D vertebral surface (or a low-resolution bone preview when
+  no vertebra mask is available);
+- export the current labelled four-panel view to PNG or PDF.
+
+You can also open a case directly:
+
+```powershell
+voxelscout-viewer --image "path\to\ct.nii.gz" --label "path\to\mask.nii.gz"
+```
+
+All image processing stays on the local machine. Viewer outputs are for viewing
+and anatomical orientation only, not for clinical diagnosis. Reliable individual
+vertebra names require an aligned segmentation label; an unlabelled CT is not
+silently presented as an automatically diagnosed result.
 
 ## Public data
 
@@ -89,13 +119,15 @@ pytest -q
 - [x] Add the data inspection command and synthetic test
 - [x] Inspect one real VerSe CT/mask pair
 - [x] Add the patient-level dataset inventory command
+- [x] Add an integrated NIfTI/DICOM desktop viewer with orthogonal views
+- [x] Add labelled vertebra navigation, highlighting, 3D surfaces, and export
 - [ ] Analyse the validation inventory and select target spacing
 - [ ] Download and split the training data
 - [ ] Train a binary 3D U-Net baseline
 - [ ] Add low-resolution localisation and ROI extraction
 - [ ] Train the high-resolution fine segmentation model
 - [ ] Compare 2D, 3D, and coarse-to-fine methods
-- [ ] Add failure-case analysis and 3D visualization
+- [ ] Add failure-case analysis
 
 ## Licensing and attribution
 
