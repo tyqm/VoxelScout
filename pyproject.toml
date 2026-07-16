@@ -9,6 +9,8 @@ description = "Coarse-to-fine 3D vertebra localization and segmentation"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "torch>=2.13",
+  "monai>=1.6,<1.7",
   "nibabel>=5.3,<6",
   "numpy>=2.0,<3",
   "matplotlib>=3.10,<4",
@@ -17,6 +19,7 @@ dependencies = [
 [project.scripts]
 voxelscout-inspect = "voxelscout.inspect_case:main"
 voxelscout-inventory = "voxelscout.build_inventory:main"
+voxelscout-preprocess = "voxelscout.preprocess_case:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
