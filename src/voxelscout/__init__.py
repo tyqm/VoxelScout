@@ -1,3 +1,3 @@
-"""VoxelScout: coarse-to-fine 3D CT perception."""
+"""VoxelScout: accessible patient-facing spinal CT exploration."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
