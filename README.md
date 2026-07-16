@@ -4,7 +4,7 @@
 
 VoxelScout is a learning and research project for building a coarse-to-fine 3D perception pipeline on publicly available volumetric CT data. The initial dataset is VerSe 2020.
 
-> Status: environment and repository scaffold complete; data inspection is the next milestone.
+> Status: one real validation case has been inspected successfully; dataset inventory is the current milestone.
 
 ## Target outcome
 
@@ -28,12 +28,6 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-Verify:
-
-```powershell
-python -c "import torch, monai; print(torch.__version__); print(monai.__version__); print(torch.cuda.is_available())"
-```
-
 Current verified local environment:
 
 ```text
@@ -54,46 +48,49 @@ Use the restructured VerSe 2020 training and validation releases:
 
 Do not commit CT volumes, masks, model weights, generated outputs, or proprietary company data.
 
-Expected example:
+Expected layout:
 
 ```text
-data/verse20/
+data/raw/dataset-02validation/
 ├── rawdata/sub-verseXXX/
-│   └── sub-verseXXX_dir-orient_ct.nii.gz
+│   └── sub-verseXXX_ct.nii.gz
 └── derivatives/sub-verseXXX/
-    └── sub-verseXXX_dir-orient_seg-vert_msk.nii.gz
+    └── sub-verseXXX_seg-vert_msk.nii.gz
 ```
 
-## First workflow
-
-Pull the current repository and install it in editable mode:
-
-```powershell
-git pull
-pip install -e .
-pytest
-```
-
-After placing one matching CT/mask pair under `data/verse20`:
+## Inspect one case
 
 ```powershell
 voxelscout-inspect --image "path\to\ct.nii.gz" --label "path\to\mask.nii.gz" --output "outputs\first_case.png"
 ```
 
-The command:
+This validates spatial alignment, reports geometry and labels, and saves sagittal, coronal, and axial overlays.
 
-1. reorients CT and mask to a canonical orientation;
-2. checks their shapes and affine transforms;
-3. reports voxel spacing, CT range, mask labels, and foreground size;
-4. saves sagittal, coronal, and axial CT/mask overlays.
+## Build the dataset inventory
+
+```powershell
+voxelscout-inventory --dataset-root "data\raw\dataset-02validation" --output "outputs\verse20_validation_inventory.csv"
+```
+
+The generated patient-level CSV records paths, volume shape, voxel spacing, physical field of view, orientation, label count, label IDs, foreground size, and alignment status. The terminal also reports dataset-wide minimum, median, and maximum spacing.
+
+## Development checks
+
+```powershell
+git pull
+pip install -e .
+pytest -q
+```
 
 ## Roadmap
 
 - [x] Create the repository
 - [x] Configure the local Python environment
 - [x] Add the data inspection command and synthetic test
-- [ ] Inspect one real VerSe CT/mask pair
-- [ ] Build a patient-level train/validation manifest
+- [x] Inspect one real VerSe CT/mask pair
+- [x] Add the patient-level dataset inventory command
+- [ ] Analyse the validation inventory and select target spacing
+- [ ] Download and split the training data
 - [ ] Train a binary 3D U-Net baseline
 - [ ] Add low-resolution localisation and ROI extraction
 - [ ] Train the high-resolution fine segmentation model
