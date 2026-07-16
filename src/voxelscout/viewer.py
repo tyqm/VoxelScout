@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 from typing import Sequence
 
 import nibabel as nib
 import numpy as np
+from PIL import Image, ImageDraw, ImageOps
 from skimage.measure import marching_cubes
 
 from voxelscout.anatomy import vertebra_info
@@ -136,3 +138,40 @@ def surface_from_mask(
         allow_degenerate=False,
     )
     return vertices, faces
+
+
+def export_contact_sheet(
+    views: Sequence[np.ndarray],
+    titles: Sequence[str],
+    *,
+    panel_size: int = 480,
+) -> bytes:
+    """Export current views as a metadata-free PNG contact sheet."""
+    if len(views) != len(titles) or not views:
+        raise ValueError("views and titles must be non-empty and have equal length")
+
+    margin = 24
+    title_height = 36
+    panel_width = panel_size + margin * 2
+    canvas = Image.new(
+        "RGB",
+        (panel_width * len(views), panel_size + title_height + margin * 2),
+        "white",
+    )
+    draw = ImageDraw.Draw(canvas)
+
+    for position, (view, title) in enumerate(zip(views, titles, strict=True)):
+        image = Image.fromarray(np.asarray(view, dtype=np.uint8), mode="RGB")
+        image = ImageOps.contain(image, (panel_size, panel_size))
+        left = position * panel_width + (panel_width - image.width) // 2
+        top = title_height + margin + (panel_size - image.height) // 2
+        canvas.paste(image, (left, top))
+        draw.text(
+            (position * panel_width + margin, margin),
+            str(title),
+            fill=(23, 50, 77),
+        )
+
+    output = BytesIO()
+    canvas.save(output, format="PNG", optimize=True)
+    return output.getvalue()
