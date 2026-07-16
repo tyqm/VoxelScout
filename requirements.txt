@@ -6,6 +6,7 @@ SimpleITK>=2.5,<3
 scipy>=1.15,<2
 scikit-image>=0.25,<1
 matplotlib>=3.10,<4
+Pillow>=11,<13
 plotly>=6,<7
 streamlit>=1.49,<2
 pandas>=2.3,<3
