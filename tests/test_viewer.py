@@ -2,6 +2,7 @@ import numpy as np
 
 from voxelscout.anatomy import vertebra_info
 from voxelscout.viewer import (
+    export_contact_sheet,
     label_centroid,
     label_options,
     render_slice,
@@ -48,3 +49,15 @@ def test_window_and_surface() -> None:
     vertices, faces = surface_from_mask(mask, (1, 1, 1), step_size=1)
     assert vertices.shape[1] == 3
     assert faces.shape[1] == 3
+
+
+def test_export_contact_sheet_is_png() -> None:
+    first = np.zeros((20, 30, 3), dtype=np.uint8)
+    second = np.full((30, 20, 3), 180, dtype=np.uint8)
+    exported = export_contact_sheet(
+        [first, second],
+        ["Sagittal — slice 10", "Axial — slice 12"],
+        panel_size=64,
+    )
+    assert exported.startswith(b"\\x89PNG\\r\\n\\x1a\\n")
+    assert len(exported) > 100
