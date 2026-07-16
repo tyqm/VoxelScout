@@ -1,102 +1,160 @@
 # VoxelScout
 
-## Coarse-to-Fine 3D Object Localisation and Segmentation
+## A patient-facing spinal CT viewer
 
-VoxelScout is a learning and research project for building a coarse-to-fine 3D perception pipeline on publicly available volumetric CT data. The initial dataset is VerSe 2020.
+VoxelScout transforms medical imaging files that are difficult for patients to interpret into spinal views that are easier to browse, locate and explain.
 
-> Status: one real validation case has been inspected successfully; dataset inventory is the current milestone.
+> Current status: the first patient-facing GUI is implemented for local NIfTI CT volumes and trusted vertebra masks.
 
-## Target outcome
+## Project aim
 
-The project aims to:
+VoxelScout aims to make spinal CT data more accessible to patients with no prior medical imaging knowledge. The tool allows users to open a CT scan through a simple graphical interface and presents it in an understandable form, including familiar anatomical views, vertebral labels and an interactive visualisation of the visible spinal region.
 
-- combine low-resolution object localisation with high-resolution ROI segmentation;
-- implement intensity normalisation, voxel-spacing resampling, augmentation, and patch-based training with PyTorch and MONAI;
-- compare 2D, single-stage 3D, and coarse-to-fine approaches using Dice, IoU, latency, and memory;
-- visualize orthogonal slice overlays, confidence maps, and 3D surface reconstructions.
+The system supports understanding and communication rather than clinical diagnosis. It does not determine whether an abnormality is present and does not replace interpretation by a qualified healthcare professional.
 
-These are project objectives, not completed results. Results and measured metrics will be added as experiments are completed.
+## Problem statement
 
-## Local environment
+Patients may receive medical imaging data in formats such as NIfTI or DICOM, but these files are difficult to inspect without specialist software and prior knowledge of medical imaging. Existing research implementations primarily target researchers and clinicians, often requiring command-line tools, complex dependencies and technical configuration. VoxelScout investigates how spinal CT data can be presented through a simplified patient-facing interface.
 
-Install PyTorch separately so the CPU development installation does not overwrite a future CUDA installation:
+## Product requirements
+
+### Must be simple
+
+- Start from a public example or upload one NIfTI volume.
+- Present side, front and cross-sectional views with plain-language names.
+- Offer useful CT display presets without requiring knowledge of window parameters.
+- Allow a vertebra to be selected and located with one button.
+- Explain that coloured labels show anatomy, not disease.
+
+### Must be honest and safe
+
+- Never infer a diagnosis.
+- Never claim that a missing label means an abnormality.
+- Display vertebra names only when a trusted segmentation is available.
+- State clearly when automatic segmentation has not been run.
+- Keep public demo data separate from patient data and exclude all scans from Git.
+
+### Should remain lightweight
+
+- Run locally on an ordinary computer for browsing.
+- Build a decimated 3D surface only when requested.
+- Retain the coarse-to-fine research path as a future way to reduce inference memory.
+
+## Implemented GUI
+
+The Streamlit application currently provides:
+
+- automatic discovery of a local VerSe example;
+- upload of a NIfTI CT volume and optional matching mask;
+- sagittal (side), coronal (front) and axial (cross-sectional) sliders;
+- bone, soft-tissue and lung display presets;
+- adjustable label opacity;
+- C1–C7, T1–T12, L1–L6 and T13 plain-language mappings;
+- one-click navigation to a selected vertebra;
+- an interactive 3D surface for the whole visible spine or one vertebra;
+- patient-facing limitations and safety messages.
+
+When no mask is available, VoxelScout still provides CT browsing but deliberately disables labels and 3D reconstruction. Automatic segmentation is a separate future milestone.
+
+## Run locally
+
+Activate the verified environment and update the project:
 
 ```powershell
 conda activate voxelscout
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+git pull origin main
 pip install -r requirements.txt
-pip install -e .
-```
-
-Current verified local environment:
-
-```text
-PyTorch: 2.13.0+cpu
-MONAI:   1.6.0
-CUDA:    False
-```
-
-The local machine is for preprocessing, visualization, tests, and small CPU smoke runs. Full 3D training will use an NVIDIA GPU environment later.
-
-## Public data
-
-Use the restructured VerSe 2020 training and validation releases:
-
-- Official repository: https://github.com/anjany/verse
-- Training: https://s3.bonescreen.de/public/VerSe-complete/dataset-verse20training.zip
-- Validation: https://s3.bonescreen.de/public/VerSe-complete/dataset-verse20validation.zip
-
-Do not commit CT volumes, masks, model weights, generated outputs, or proprietary company data.
-
-Expected layout:
-
-```text
-data/raw/dataset-02validation/
-├── rawdata/sub-verseXXX/
-│   └── sub-verseXXX_ct.nii.gz
-└── derivatives/sub-verseXXX/
-    └── sub-verseXXX_seg-vert_msk.nii.gz
-```
-
-## Inspect one case
-
-```powershell
-voxelscout-inspect --image "path\to\ct.nii.gz" --label "path\to\mask.nii.gz" --output "outputs\first_case.png"
-```
-
-This validates spatial alignment, reports geometry and labels, and saves sagittal, coronal, and axial overlays.
-
-## Build the dataset inventory
-
-```powershell
-voxelscout-inventory --dataset-root "data\raw\dataset-02validation" --output "outputs\verse20_validation_inventory.csv"
-```
-
-The generated patient-level CSV records paths, volume shape, voxel spacing, physical field of view, orientation, label count, label IDs, foreground size, and alignment status. The terminal also reports dataset-wide minimum, median, and maximum spacing.
-
-## Development checks
-
-```powershell
-git pull
 pip install -e .
 pytest -q
 ```
 
-## Roadmap
+Start the GUI:
 
-- [x] Create the repository
-- [x] Configure the local Python environment
-- [x] Add the data inspection command and synthetic test
-- [x] Inspect one real VerSe CT/mask pair
-- [x] Add the patient-level dataset inventory command
-- [ ] Analyse the validation inventory and select target spacing
-- [ ] Download and split the training data
-- [ ] Train a binary 3D U-Net baseline
-- [ ] Add low-resolution localisation and ROI extraction
-- [ ] Train the high-resolution fine segmentation model
-- [ ] Compare 2D, 3D, and coarse-to-fine methods
-- [ ] Add failure-case analysis and 3D visualization
+```powershell
+streamlit run app.py
+```
+
+The browser should open at:
+
+```text
+http://localhost:8501
+```
+
+For the existing VerSe validation data, choose **Use a local VerSe example**. VoxelScout will prefer `sub-gl017` when it is available.
+
+## Data
+
+Public source:
+
+- VerSe repository: https://github.com/anjany/verse
+- VerSe 2020 validation: https://s3.bonescreen.de/public/VerSe-complete/dataset-verse20validation.zip
+
+Expected local layout:
+
+```text
+data/raw/dataset-02validation/
+├── rawdata/sub-gl017/sub-gl017_ct.nii.gz
+└── derivatives/sub-gl017/sub-gl017_seg-vert_msk.nii.gz
+```
+
+Medical images, masks, model weights and generated outputs are excluded from Git.
+
+## Revised development plan
+
+### Phase 1 — Patient-facing viewer
+
+- [x] Read and validate NIfTI CT/mask pairs.
+- [x] Standardise orientation for display.
+- [x] Inspect scan geometry and spacing variation.
+- [x] Create orthogonal CT views and mask overlays.
+- [x] Build the Streamlit GUI.
+- [x] Add plain-language vertebra navigation.
+- [x] Add optional lightweight 3D reconstruction.
+- [ ] Conduct a short usability review with non-specialist users.
+- [ ] Improve wording and interaction from observed confusion.
+
+### Phase 2 — Input accessibility
+
+- [ ] Add local DICOM-series import.
+- [ ] Detect incomplete or mismatched series.
+- [ ] Remove identifying metadata from any exported screenshots.
+- [ ] Package the application for simpler local launch.
+
+### Phase 3 — Automatic anatomical labelling
+
+- [ ] Download the VerSe training set.
+- [ ] Establish a reproducible 3D segmentation baseline.
+- [ ] Integrate model inference behind the GUI.
+- [ ] Mark predictions clearly as automated and potentially inaccurate.
+- [ ] Compare prediction with trusted annotations using Dice and IoU.
+
+### Phase 4 — Lightweight coarse-to-fine inference
+
+- [ ] Localise the spine at 3 mm isotropic spacing.
+- [ ] Segment the cropped ROI at 1 mm isotropic spacing.
+- [ ] Compare memory, latency and segmentation quality with a single-stage model.
+- [ ] Add failure-case analysis for thick-slice and unusual field-of-view scans.
+
+## Evaluation
+
+The project is evaluated as a patient-facing system, not only as a model:
+
+- task completion: can a new user open a scan and locate a named vertebra?
+- usability: number of steps, time to first useful view and points of confusion;
+- correctness: spatial alignment, label mapping and preservation of mask classes;
+- performance: load time, interaction latency, peak memory and 3D mesh size;
+- model quality, when automatic segmentation is added: Dice, IoU and failure cases.
+
+## Existing command-line tools
+
+The earlier engineering tools remain available:
+
+```powershell
+voxelscout-inspect --image path\to\ct.nii.gz --label path\to\mask.nii.gz
+voxelscout-inventory --dataset-root data\raw\dataset-02validation
+voxelscout-preprocess --image path\to\ct.nii.gz --label path\to\mask.nii.gz --spacing 1 1 1
+```
 
 ## Licensing and attribution
 
-Project code will use the MIT License. VerSe data is distributed separately under CC BY-SA 4.0. Follow the official dataset terms and cite the VerSe publications when reporting results.
+Project code is intended to use the MIT Licence. VerSe data is distributed separately under CC BY-SA 4.0. Follow the official dataset terms and cite the VerSe publications when reporting results.
