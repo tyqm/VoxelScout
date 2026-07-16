@@ -1,0 +1,12 @@
+[server]
+maxUploadSize = 1024
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+primaryColor = "#2B7A78"
+backgroundColor = "#F8FAFC"
+secondaryBackgroundColor = "#EAF2F3"
+textColor = "#17324D"
+font = "sans serif"
