@@ -16,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 voxelscout-inspect = "voxelscout.inspect_case:main"
+voxelscout-inventory = "voxelscout.build_inventory:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
