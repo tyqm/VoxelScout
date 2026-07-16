@@ -12,6 +12,7 @@ import streamlit as st
 
 from voxelscout.anatomy import vertebra_info
 from voxelscout.viewer import (
+    export_contact_sheet,
     label_centroid,
     label_options,
     load_volume,
@@ -173,11 +174,21 @@ opacity = st.sidebar.slider(
 
 labels = label_options(mask)
 selected_label = None
+highlight_selected = False
 if labels:
     st.sidebar.divider()
     st.sidebar.header("Find a vertebra")
     selected_name = st.sidebar.selectbox("Vertebra", tuple(labels))
     selected_label = labels[selected_name]
+    highlight_selected = st.sidebar.toggle(
+        "Highlight only this vertebra",
+        value=False,
+        help="Temporarily hides the other coloured labels to make one vertebra easier to discuss.",
+    )
+
+display_mask = mask
+if mask is not None and highlight_selected and selected_label is not None:
+    display_mask = np.where(mask == selected_label, mask, 0)
 
 case_key = f"{case_name}-{image.shape}"
 slider_keys = {
@@ -217,6 +228,8 @@ with explore_tab:
         2: ("Axial", "Cross-section"),
     }
     columns = st.columns(3)
+    export_views = []
+    export_titles = []
     for axis, column in enumerate(columns):
         title, explanation = names[axis]
         with column:
@@ -230,7 +243,7 @@ with explore_tab:
             )
             rendered = render_slice(
                 image,
-                mask,
+                display_mask,
                 axis=axis,
                 index=index,
                 centre=window_centre,
@@ -238,6 +251,22 @@ with explore_tab:
                 opacity=opacity,
             )
             st.image(rendered, use_container_width=True)
+            export_views.append(rendered)
+            export_titles.append(f"{title} — slice {index}")
+
+    export_png = export_contact_sheet(export_views, export_titles)
+    st.download_button(
+        "Export current labelled views",
+        data=export_png,
+        file_name="VoxelScout_spine_views.png",
+        mime="image/png",
+        use_container_width=True,
+        help="Exports only the displayed images and view names; source-file metadata are not embedded.",
+    )
+    st.caption(
+        "The exported PNG contains the current views only. Check it before sharing "
+        "and follow the privacy advice provided by your healthcare service."
+    )
 
     if mask is None:
         st.info(
@@ -324,6 +353,13 @@ with about_tab:
     st.header("What VoxelScout does")
     st.markdown(
         """
+        **Intended users**
+
+        - **Patients:** browse a scan and locate anatomy discussed by a clinician.
+        - **Medical students:** relate CT slices to labelled three-dimensional anatomy.
+        - **Technical users new to medical imaging:** learn common inputs, outputs,
+          anatomical views and vertebral labels before moving to specialist software.
+
         VoxelScout turns specialist volumetric files into a view that is easier to
         browse, locate and explain. It standardises orientation for display, provides
         familiar anatomical views, and translates numeric vertebra labels into
@@ -342,5 +378,15 @@ with about_tab:
         - Automatic vertebra segmentation for a new patient scan.
         - Detection of fractures, tumours or any other abnormality.
         - Medical advice or interpretation.
+
+        **Short glossary**
+
+        - **CT:** Computed Tomography, an X-ray-based three-dimensional scan.
+        - **DICOM:** the common clinical format for a series of medical images.
+        - **NIfTI:** a file format that stores a complete three-dimensional volume.
+        - **Sagittal / coronal / axial:** side, front and cross-sectional views.
+        - **Voxel spacing:** the physical size represented by one 3D image element.
+        - **RAS:** Right–Anterior–Superior, an orientation convention used to
+          standardise how a volume is displayed.
         """
     )
