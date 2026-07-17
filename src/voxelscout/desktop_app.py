@@ -126,7 +126,7 @@ class VoxelScoutWindow(QMainWindow):
         self.open_button.clicked.connect(self.open_case)
         header_layout.addWidget(self.open_button)
 
-        self.reset_button = QPushButton("Reset view")
+        self.reset_button = QPushButton("Reset")
         self.reset_button.setEnabled(False)
         self.reset_button.clicked.connect(self.reset_camera)
         header_layout.addWidget(self.reset_button)
@@ -156,12 +156,6 @@ class VoxelScoutWindow(QMainWindow):
         self.scan_name.setObjectName("scanName")
         self.scan_name.setWordWrap(True)
         sidebar_layout.addWidget(self.scan_name)
-        self.scan_details = QLabel(
-            "Open a CT volume and its matching VerSe segmentation to build the model."
-        )
-        self.scan_details.setObjectName("muted")
-        self.scan_details.setWordWrap(True)
-        sidebar_layout.addWidget(self.scan_details)
 
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.HLine)
@@ -269,19 +263,7 @@ class VoxelScoutWindow(QMainWindow):
 
     def _show_empty_scene(self) -> None:
         self.plotter.clear()
-        self.plotter.set_background("#050a10")
-        self.plotter.add_text(
-            "Open a CT and segmentation to explore the 3D spine",
-            position="upper_left",
-            color="#91a4b7",
-            font_size=13,
-        )
-        self.plotter.add_text(
-            "The CT voxel data stays unloaded until a future optional 2D viewer needs it.",
-            position="lower_left",
-            color="#5f7589",
-            font_size=9,
-        )
+        self.plotter.set_background("#ffffff")
         self.plotter.render()
 
     @Slot()

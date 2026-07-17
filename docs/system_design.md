@@ -10,7 +10,7 @@ without learning specialist imaging controls.
 
 ```text
 ┌──────────────────────────────────────────────────────────┐
-│ Open CT + segmentation       Reset view   Export image   │
+│ Open CT + segmentation        Reset    Export            │
 ├──────────────────┬───────────────────────────────────────┤
 │ Scan details     │                                       │
 │                  │         Interactive 3D spine          │
