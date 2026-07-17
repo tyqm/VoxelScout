@@ -18,10 +18,6 @@ without learning specialist imaging controls.
 │ Lumbar spine     │                                       │
 │ Plain explanation                                       │
 ├──────────────────┴───────────────────────────────────────┤
-│ For education and communication only · Not for diagnosis│
-└──────────────────────────────────────────────────────────┘
-```
-
 There are no tabs, always-visible slice panels, window-level controls, inventory
 entry points, diagnosis functions, or model-training controls.
 

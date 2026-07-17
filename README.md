@@ -15,10 +15,6 @@ The Windows application deliberately focuses on one workflow:
 5. Click a vertebra to keep it highlighted and show a short explanation.
 6. Export the current 3D camera view as a PNG.
 
-The interface contains only a scan/selection sidebar, the 3D viewport, a small
-toolbar, and the persistent statement that the output is for education and
-communication rather than diagnosis.
-
 ## Run
 
 ```powershell

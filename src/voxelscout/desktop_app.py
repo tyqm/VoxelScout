@@ -219,9 +219,6 @@ class VoxelScoutWindow(QMainWindow):
         self.status.setObjectName("status")
         footer_layout.addWidget(self.status)
         footer_layout.addStretch(1)
-        notice = QLabel("For education and communication only · Not for diagnosis")
-        notice.setObjectName("notice")
-        footer_layout.addWidget(notice)
         outer.addWidget(footer)
 
         self.setCentralWidget(root)
