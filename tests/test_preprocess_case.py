@@ -2,7 +2,9 @@ from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+import pytest
 
+pytest.importorskip("monai", reason="research preprocessing dependencies are optional")
 from voxelscout.preprocess_case import build_preprocess_transform
 
 

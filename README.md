@@ -1,134 +1,105 @@
 # VoxelScout
 
-## Coarse-to-Fine 3D Object Localisation and Segmentation
+VoxelScout is a desktop educational tool that converts segmented spinal CT data
+into an interactive 3D model, allowing non-specialist users to identify and
+understand visible vertebrae through direct exploration.
 
-VoxelScout is a learning and research project for building a coarse-to-fine 3D perception pipeline on publicly available volumetric CT data. The initial dataset is VerSe 2020.
+## Desktop application
 
-> Status: the dataset inspection/preprocessing workflow and an integrated local
-> spinal CT desktop viewer are available. Model training remains a later milestone.
+The Windows application deliberately focuses on one workflow:
 
-## Target outcome
+1. Open a NIfTI CT and its matching VerSe segmentation mask.
+2. Wait while one simplified mesh is generated and cached for each vertebra.
+3. Rotate, zoom, and pan the coloured 3D spine.
+4. Hover to see the vertebra code, anatomical name, and spinal region.
+5. Click a vertebra to keep it highlighted and show a short explanation.
+6. Export the current 3D camera view as a PNG.
 
-The project aims to:
+The interface contains only a scan/selection sidebar, the 3D viewport, a small
+toolbar, and the persistent statement that the output is for education and
+communication rather than diagnosis.
 
-- combine low-resolution object localisation with high-resolution ROI segmentation;
-- implement intensity normalisation, voxel-spacing resampling, augmentation, and patch-based training with PyTorch and MONAI;
-- compare 2D, single-stage 3D, and coarse-to-fine approaches using Dice, IoU, latency, and memory;
-- visualize orthogonal slice overlays, confidence maps, and 3D surface reconstructions.
-
-These are project objectives, not completed results. Results and measured metrics will be added as experiments are completed.
-
-## Local environment
-
-Install PyTorch separately so the CPU development installation does not overwrite a future CUDA installation:
+## Run
 
 ```powershell
 conda activate voxelscout
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
 pip install -e .
-```
-
-Current verified local environment:
-
-```text
-PyTorch: 2.13.0+cpu
-MONAI:   1.6.0
-CUDA:    False
-```
-
-The local machine is for preprocessing, visualization, tests, and small CPU smoke runs. Full 3D training will use an NVIDIA GPU environment later.
-
-## Launch the desktop viewer
-
-```powershell
 voxelscout-viewer
 ```
 
-The viewer implements the current user-facing workflow in one local application:
-
-- import a NIfTI CT file or a folder containing a DICOM series;
-- automatically reorient the volume and apply a CT bone window for viewing;
-- show linked sagittal, coronal, and axial slices;
-- automatically match a VerSe-style `*_seg-vert_msk.nii.gz` companion label, or
-  load another aligned NIfTI label manually;
-- list, select, locate, and highlight individual labelled vertebrae;
-- show a rotatable 3D vertebral surface (or a low-resolution bone preview when
-  no vertebra mask is available);
-- export the current labelled four-panel view to PNG or PDF.
-
-You can also open a case directly:
+You can also launch it directly:
 
 ```powershell
-voxelscout-viewer --image "path\to\ct.nii.gz" --label "path\to\mask.nii.gz"
+python app.py
 ```
 
-All image processing stays on the local machine. Viewer outputs are for viewing
-and anatomical orientation only, not for clinical diagnosis. Reliable individual
-vertebra names require an aligned segmentation label; an unlabelled CT is not
-silently presented as an automatically diagnosed result.
+For a scripted launch with a known VerSe pair:
+
+```powershell
+python app.py --ct path\to\scan_ct.nii.gz --mask path\to\scan_seg-vert_msk.nii.gz
+```
+
+## Performance design
+
+- PySide6 provides a native Windows window; no browser or local web server opens.
+- PyVistaQt/VTK performs camera interaction and actor picking in the viewport.
+- The CT voxel array is not read for the default 3D workflow; only its header is
+  used to validate shape, affine, spacing, and orientation.
+- The compact integer segmentation is released after mesh construction.
+- Marching Cubes runs separately on each vertebra's tight bounding box with a
+  reduced sampling step.
+- Oversized meshes are simplified with topology-preserving VTK decimation.
+- Meshes are cached in memory by file path, modification time, and quality.
+- Hover and click operate on existing VTK actors and never rescan the mask.
+- Loading and mesh generation run in a background QThread with progress updates.
+
+Run the real-case benchmark with:
+
+```powershell
+python benchmarks/benchmark_viewer.py
+```
+
+On the included 512 x 512 x 229 validation case (11 vertebrae), the current
+implementation builds the meshes in about 12.7 seconds, keeps about 2.27 MiB of
+mesh data, and reloads the same in-memory case in about 3 ms. Results vary by
+machine; the benchmark prints the local measurements.
+
+## Current limitation
+
+VoxelScout does not yet segment an arbitrary CT. A trusted matching mask is
+required. Integrating a pretrained vertebra segmentation model is future work;
+the current public demonstration uses VerSe CT/mask pairs.
+
+The application does not diagnose fractures, tumours, or other abnormalities and
+does not replace interpretation by a qualified healthcare professional.
 
 ## Public data
 
-Use the restructured VerSe 2020 training and validation releases:
+- VerSe repository: https://github.com/anjany/verse
+- VerSe 2020 validation: https://s3.bonescreen.de/public/VerSe-complete/dataset-verse20validation.zip
 
-- Official repository: https://github.com/anjany/verse
-- Training: https://s3.bonescreen.de/public/VerSe-complete/dataset-verse20training.zip
-- Validation: https://s3.bonescreen.de/public/VerSe-complete/dataset-verse20validation.zip
-
-Do not commit CT volumes, masks, model weights, generated outputs, or proprietary company data.
-
-Expected layout:
+Expected local layout:
 
 ```text
 data/raw/dataset-02validation/
-├── rawdata/sub-verseXXX/
-│   └── sub-verseXXX_ct.nii.gz
-└── derivatives/sub-verseXXX/
-    └── sub-verseXXX_seg-vert_msk.nii.gz
+├── rawdata/sub-gl017/sub-gl017_ct.nii.gz
+└── derivatives/sub-gl017/sub-gl017_seg-vert_msk.nii.gz
 ```
 
-## Inspect one case
+Medical images, masks, model weights, generated screenshots, and patient data are
+excluded from Git.
+
+## Research tools
+
+The older preprocessing experiments remain optional and are not exposed in the
+desktop GUI. Install their heavier dependencies only when needed:
 
 ```powershell
-voxelscout-inspect --image "path\to\ct.nii.gz" --label "path\to\mask.nii.gz" --output "outputs\first_case.png"
+pip install -e ".[research]"
 ```
 
-This validates spatial alignment, reports geometry and labels, and saves sagittal, coronal, and axial overlays.
+## Licensing
 
-## Build the dataset inventory
-
-```powershell
-voxelscout-inventory --dataset-root "data\raw\dataset-02validation" --output "outputs\verse20_validation_inventory.csv"
-```
-
-The generated patient-level CSV records paths, volume shape, voxel spacing, physical field of view, orientation, label count, label IDs, foreground size, and alignment status. The terminal also reports dataset-wide minimum, median, and maximum spacing.
-
-## Development checks
-
-```powershell
-git pull
-pip install -e .
-pytest -q
-```
-
-## Roadmap
-
-- [x] Create the repository
-- [x] Configure the local Python environment
-- [x] Add the data inspection command and synthetic test
-- [x] Inspect one real VerSe CT/mask pair
-- [x] Add the patient-level dataset inventory command
-- [x] Add an integrated NIfTI/DICOM desktop viewer with orthogonal views
-- [x] Add labelled vertebra navigation, highlighting, 3D surfaces, and export
-- [ ] Analyse the validation inventory and select target spacing
-- [ ] Download and split the training data
-- [ ] Train a binary 3D U-Net baseline
-- [ ] Add low-resolution localisation and ROI extraction
-- [ ] Train the high-resolution fine segmentation model
-- [ ] Compare 2D, 3D, and coarse-to-fine methods
-- [ ] Add failure-case analysis
-
-## Licensing and attribution
-
-Project code will use the MIT License. VerSe data is distributed separately under CC BY-SA 4.0. Follow the official dataset terms and cite the VerSe publications when reporting results.
+Project code uses the MIT Licence. VerSe data is distributed separately under
+CC BY-SA 4.0.

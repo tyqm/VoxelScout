@@ -4,26 +4,34 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "voxelscout"
-version = "0.1.0"
-description = "Coarse-to-fine 3D vertebra localization and segmentation"
+version = "0.3.0"
+description = "A desktop educational tool for interactive 3D vertebra exploration"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "torch>=2.13",
-  "monai>=1.6,<1.7",
   "nibabel>=5.3,<6",
   "numpy>=2.0,<3",
-  "matplotlib>=3.10,<4",
-  "SimpleITK>=2.5,<3",
-  "scipy>=1.15,<2",
   "scikit-image>=0.25,<1",
+  "PySide6>=6.8,<7",
+  "pyvista>=0.46,<1",
+  "pyvistaqt>=0.11,<1",
+  "matplotlib>=3.10,<4",
 ]
 
+[project.optional-dependencies]
+research = [
+  "torch>=2.13",
+  "monai>=1.6,<1.7",
+  "SimpleITK>=2.5,<3",
+  "scipy>=1.15,<2",
+]
+dev = ["pytest>=8,<10"]
+
 [project.scripts]
+voxelscout-viewer = "voxelscout.desktop_app:main"
 voxelscout-inspect = "voxelscout.inspect_case:main"
 voxelscout-inventory = "voxelscout.build_inventory:main"
 voxelscout-preprocess = "voxelscout.preprocess_case:main"
-voxelscout-viewer = "voxelscout.viewer:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
