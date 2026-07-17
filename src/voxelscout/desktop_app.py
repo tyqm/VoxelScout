@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import pyvista as pv
 from PySide6.QtCore import QObject, QPoint, Qt, QThread, QTimer, Signal, Slot
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QCloseEvent, QCursor
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -37,7 +37,7 @@ from voxelscout.desktop_data import (
 )
 
 
-BACKGROUND = "#fdfeff"
+BACKGROUND = "#f9fafc"
 PANEL = "#111e2b"
 PANEL_ALT = "#162738"
 TEXT = "#edf4fa"
@@ -85,10 +85,11 @@ class VoxelScoutWindow(QMainWindow):
         self._last_pick_at = 0.0
         self._load_thread: QThread | None = None
         self._load_worker: CaseLoader | None = None
+        self._auto_rotation_paused = False
 
-        self.setWindowTitle("VoxelS")
-        self.resize(1320, 820)
-        self.setMinimumSize(980, 640)
+        self.setWindowTitle("Lenx")
+        self.resize(960, 680)
+        self.setMinimumSize(760, 520)
         self._build_ui()
         self._configure_plotter()
         self._show_empty_scene()
@@ -100,79 +101,76 @@ class VoxelScoutWindow(QMainWindow):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        header = QFrame()
-        header.setObjectName("header")
-        header.setFixedHeight(72)
-        header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(24, 12, 22, 12)
-
-        brand = QLabel("VOXEL<span style='color:#31c4b3'>S</span>")
-        brand.setObjectName("brand")
-        brand.setTextFormat(Qt.TextFormat.RichText)
-        header_layout.addWidget(brand)
-        header_layout.addStretch(1)
-
-        self.progress = QProgressBar()
-        self.progress.setFixedWidth(230)
-        self.progress.setRange(0, 100)
-        self.progress.hide()
-        header_layout.addWidget(self.progress)
-
-        self.open_button = QPushButton("Open Files")
-        self.open_button.setObjectName("primaryButton")
-        self.open_button.clicked.connect(self.open_case)
-        header_layout.addWidget(self.open_button)
-
-        self.reset_button = QPushButton("Reset")
-        self.reset_button.setEnabled(False)
-        self.reset_button.clicked.connect(self.reset_camera)
-        header_layout.addWidget(self.reset_button)
-
-        self.export_button = QPushButton("Export")
-        self.export_button.setEnabled(False)
-        self.export_button.clicked.connect(self.export_image)
-        header_layout.addWidget(self.export_button)
-        outer.addWidget(header)
-
         content = QWidget()
         content_layout = QHBoxLayout(content)
-        content_layout.setContentsMargins(14, 14, 14, 14)
-        content_layout.setSpacing(14)
+        content_layout.setContentsMargins(10, 10, 10, 10)
+        content_layout.setSpacing(10)
 
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(305)
+        sidebar.setFixedWidth(220)
         sidebar_layout = QVBoxLayout(sidebar)
-        sidebar_layout.setContentsMargins(20, 20, 20, 20)
-        sidebar_layout.setSpacing(10)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(0)
+
+        controls_panel = QFrame()
+        controls_panel.setObjectName("controlsPanel")
+        controls_layout = QVBoxLayout(controls_panel)
+        controls_layout.setContentsMargins(18, 18, 18, 18)
+        controls_layout.setSpacing(8)
+
+        self.open_button = QPushButton("Open Files")
+        self.open_button.setObjectName("rainbowOpen")
+        self.open_button.setFixedHeight(40)
+        self.open_button.clicked.connect(self.open_case)
+        controls_layout.addWidget(self.open_button)
+
+        self.reset_button = QPushButton("Reset")
+        self.reset_button.setObjectName("rainbowReset")
+        self.reset_button.setFixedHeight(40)
+        self.reset_button.setEnabled(False)
+        self.reset_button.clicked.connect(self.reset_camera)
+        controls_layout.addWidget(self.reset_button)
+
+        self.export_button = QPushButton("Export")
+        self.export_button.setObjectName("rainbowExport")
+        self.export_button.setFixedHeight(40)
+        self.export_button.setEnabled(False)
+        self.export_button.clicked.connect(self.export_image)
+        controls_layout.addWidget(self.export_button)
+
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setFixedHeight(16)
+        self.progress.hide()
+        controls_layout.addWidget(self.progress)
+        controls_layout.addStretch(1)
+        sidebar_layout.addWidget(controls_panel, 1)
 
         divider = QFrame()
-        divider.setFrameShape(QFrame.Shape.HLine)
-        divider.setObjectName("divider")
+        divider.setObjectName("sidebarDivider")
+        divider.setFixedHeight(1)
         sidebar_layout.addWidget(divider)
 
-        selected_heading = QLabel("SELECTED VERTEBRA")
-        selected_heading.setObjectName("sectionHeading")
-        sidebar_layout.addWidget(selected_heading)
-        self.selected_code = QLabel("—")
+        info_panel = QFrame()
+        info_panel.setObjectName("infoPanel")
+        info_layout = QVBoxLayout(info_panel)
+        info_layout.setContentsMargins(18, 18, 18, 18)
+        info_layout.setSpacing(8)
+
+        self.selected_code = QLabel("")
         self.selected_code.setObjectName("selectedCode")
-        sidebar_layout.addWidget(self.selected_code)
-        self.selected_name = QLabel("Hover over a vertebra")
+        info_layout.addWidget(self.selected_code)
+        self.selected_name = QLabel("")
         self.selected_name.setObjectName("selectedName")
         self.selected_name.setWordWrap(True)
-        sidebar_layout.addWidget(self.selected_name)
-        self.selected_region = QLabel(
-            "Move the pointer over the 3D model to identify anatomy. Click to keep a vertebra selected."
-        )
+        info_layout.addWidget(self.selected_name)
+        self.selected_region = QLabel("")
         self.selected_region.setObjectName("region")
         self.selected_region.setWordWrap(True)
-        sidebar_layout.addWidget(self.selected_region)
-        self.selected_explanation = QLabel("")
-        self.selected_explanation.setObjectName("muted")
-        self.selected_explanation.setWordWrap(True)
-        sidebar_layout.addWidget(self.selected_explanation)
-        sidebar_layout.addStretch(1)
-
+        info_layout.addWidget(self.selected_region)
+        info_layout.addStretch(1)
+        sidebar_layout.addWidget(info_panel, 1)
         content_layout.addWidget(sidebar)
 
         viewer_frame = QFrame()
@@ -187,17 +185,6 @@ class VoxelScoutWindow(QMainWindow):
         content_layout.addWidget(viewer_frame, 1)
         outer.addWidget(content, 1)
 
-        footer = QFrame()
-        footer.setObjectName("footer")
-        footer.setFixedHeight(42)
-        footer_layout = QHBoxLayout(footer)
-        footer_layout.setContentsMargins(20, 0, 20, 0)
-        self.status = QLabel("Ready")
-        self.status.setObjectName("status")
-        footer_layout.addWidget(self.status)
-        footer_layout.addStretch(1)
-        outer.addWidget(footer)
-
         self.setCentralWidget(root)
         self.setStyleSheet(self._stylesheet())
 
@@ -205,39 +192,41 @@ class VoxelScoutWindow(QMainWindow):
     def _stylesheet() -> str:
         return f"""
         QWidget#root {{ background: {BACKGROUND}; color: {TEXT}; font-family: 'Segoe UI'; }}
-        QFrame#header {{ background: #0d1926; border-bottom: 1px solid #203447; }}
-        QLabel#brand {{ font-size: 24px; font-weight: 700; color: white; }}
-        QLabel#subtitle {{ color: {MUTED}; font-size: 11px; margin-left: 10px; }}
         QPushButton {{ background: {PANEL_ALT}; color: {TEXT}; border: 1px solid #294159;
-                       border-radius: 6px; padding: 9px 14px; font-weight: 600; }}
-        QPushButton:hover {{ background: #213b51; border-color: #3f627f; }}
-        QPushButton:disabled {{ color: #5e7285; background: #111e2a; border-color: #1d2b38; }}
-        QPushButton#primaryButton {{ background: #167f76; border-color: #23a99d; color: white; }}
-        QPushButton#primaryButton:hover {{ background: #1a998d; }}
+                       border-radius: 6px; padding: 7px 12px; font-weight: 600; }}
+        QPushButton#rainbowOpen {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 #ff5f6d, stop:1 #ff8a5b); border: none; color: white; }}
+        QPushButton#rainbowReset {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 #ffd166, stop:1 #06d6a0); border: none; color: #0d1926; }}
+        QPushButton#rainbowExport {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 #3a86ff, stop:1 #8338ec); border: none; color: white; }}
+        QPushButton#rainbowOpen:hover, QPushButton#rainbowReset:hover,
+        QPushButton#rainbowExport:hover {{ border: 2px solid rgba(255, 255, 255, 150); }}
+        QPushButton#rainbowOpen:disabled, QPushButton#rainbowReset:disabled,
+        QPushButton#rainbowExport:disabled {{ color: #68798a; background: #1b2a38; }}
         QProgressBar {{ color: {TEXT}; background: #0b1520; border: 1px solid #294159;
                         border-radius: 5px; text-align: center; height: 18px; }}
         QProgressBar::chunk {{ background: {ACCENT}; border-radius: 4px; }}
         QFrame#sidebar {{ background: {PANEL}; border: 1px solid #203447; border-radius: 8px; }}
+        QFrame#controlsPanel, QFrame#infoPanel {{ background: transparent; border: none; }}
+        QFrame#sidebarDivider {{ background: #294159; border: none; }}
         QFrame#viewerFrame {{ background: #050a10; border: 1px solid #203447; border-radius: 8px; }}
-        QLabel#sectionHeading {{ color: {ACCENT}; font-size: 11px; font-weight: 700; }}
         QLabel#selectedCode {{ color: {GOLD}; font-size: 42px; font-weight: 750; }}
         QLabel#selectedName {{ color: white; font-size: 17px; font-weight: 650; }}
         QLabel#region {{ color: {ACCENT}; font-size: 14px; font-weight: 600; }}
-        QLabel#muted {{ color: {MUTED}; font-size: 12px; line-height: 1.35; }}
-        QLabel#hint {{ color: #7990a5; background: #0b1722; border-radius: 6px; padding: 10px; }}
-        QFrame#divider {{ color: #263b4e; background: #263b4e; max-height: 1px; }}
-        QFrame#footer {{ background: #0d1926; border-top: 1px solid #203447; }}
-        QLabel#status {{ color: {MUTED}; }}
-        QLabel#notice {{ color: #f2bd58; font-weight: 600; }}
         """
 
     def _configure_plotter(self) -> None:
-        self.plotter.set_background("#ffffff")
+        self.plotter.set_background("#050a10")
         self.plotter.enable_anti_aliasing("fxaa")
         self._picker = vtkCellPicker()
         self._picker.SetTolerance(0.0008)
         self._vtk_interactor().AddObserver("MouseMoveEvent", self._on_mouse_move)
         self._vtk_interactor().AddObserver("LeftButtonPressEvent", self._on_left_click)
+        self._rotation_timer = QTimer(self)
+        self._rotation_timer.setInterval(50)
+        self._rotation_timer.timeout.connect(self._auto_rotate)
+        self._rotation_timer.start()
 
     def _vtk_interactor(self):
         wrapper = self.plotter.iren
@@ -245,7 +234,23 @@ class VoxelScoutWindow(QMainWindow):
 
     def _show_empty_scene(self) -> None:
         self.plotter.clear()
-        self.plotter.set_background("#ffffff")
+        self.plotter.set_background("#050a10")
+        self.plotter.render()
+
+    @Slot()
+    def _auto_rotate(self) -> None:
+        if (
+            self.case is None
+            or self._auto_rotation_paused
+            or not self.isVisible()
+            or self.isMinimized()
+        ):
+            return
+        viewport = self.plotter.interactor
+        cursor_position = viewport.mapFromGlobal(QCursor.pos())
+        if viewport.rect().contains(cursor_position):
+            return
+        self.plotter.camera.Azimuth(0.35)
         self.plotter.render()
 
     @Slot()
@@ -284,7 +289,6 @@ class VoxelScoutWindow(QMainWindow):
         self.reset_button.setEnabled(False)
         self.progress.setValue(0)
         self.progress.show()
-        self.status.setText("Preparing 3D spine…")
 
         thread = QThread(self)
         worker = CaseLoader(ct_path, mask_path)
@@ -303,9 +307,8 @@ class VoxelScoutWindow(QMainWindow):
         thread.start()
 
     @Slot(int, str)
-    def _on_progress(self, value: int, message: str) -> None:
+    def _on_progress(self, value: int, _message: str) -> None:
         self.progress.setValue(value)
-        self.status.setText(message)
 
     @Slot(object)
     def _on_case_loaded(self, case: SegmentedCase) -> None:
@@ -314,18 +317,13 @@ class VoxelScoutWindow(QMainWindow):
         self.open_button.setEnabled(True)
         self.export_button.setEnabled(True)
         self.reset_button.setEnabled(True)
-        self.status.setText(
-            f"Ready · {len(case.meshes)} vertebrae · {case.mesh_memory_mib:.1f} MiB mesh data"
-        )
         self._populate_scene(case)
-        self._update_scan_details(case)
         self._set_selected(None)
 
     @Slot(str)
     def _on_load_failed(self, message: str) -> None:
         self.progress.hide()
         self.open_button.setEnabled(True)
-        self.status.setText("Could not build the 3D spine")
         QMessageBox.critical(self, "Unable to open case", message)
 
     @Slot()
@@ -335,7 +333,7 @@ class VoxelScoutWindow(QMainWindow):
 
     def _populate_scene(self, case: SegmentedCase) -> None:
         self.plotter.clear()
-        self.plotter.set_background("#ffffff")
+        self.plotter.set_background("#050a10")
         self.actor_labels.clear()
         self.label_actors.clear()
         self.base_colours.clear()
@@ -361,25 +359,7 @@ class VoxelScoutWindow(QMainWindow):
             self.base_colours[item.label] = item.colour
 
         self.plotter.add_axes(line_width=2, color="#91a4b7")
-        self.plotter.add_text(
-            "Hover to identify · Click to keep selected",
-            position="upper_left",
-            color="#91a4b7",
-            font_size=10,
-        )
         self.reset_camera()
-
-    def _update_scan_details(self, case: SegmentedCase) -> None:
-        self.scan_name.setText(case.name)
-        shape = " × ".join(str(value) for value in case.shape)
-        spacing = " × ".join(f"{value:.2f}" for value in case.spacing)
-        self.scan_details.setText(
-            f"Volume: {shape} voxels\n"
-            f"Spacing: {spacing} mm\n"
-            f"Orientation: {case.orientation}\n"
-            f"Visible vertebrae: {len(case.labels)}\n"
-            f"CT voxels loaded: no (header only)"
-        )
 
     @staticmethod
     def _actor_key(actor: object) -> str:
@@ -429,7 +409,6 @@ class VoxelScoutWindow(QMainWindow):
             self._refresh_actor(previous)
         self._refresh_actor(label)
         self._display_info(label, temporary=False)
-        self.status.setText(f"Selected {vertebra_info(label).code}")
         self.plotter.render()
 
     def _refresh_actor(self, label: int) -> None:
@@ -449,21 +428,16 @@ class VoxelScoutWindow(QMainWindow):
         info = vertebra_info(label)
         self.selected_code.setText(info.code)
         self.selected_name.setText(info.anatomical_name)
-        prefix = "Hovering · " if temporary else "Selected · "
-        self.selected_region.setText(prefix + info.region_plain)
-        self.selected_explanation.setText(info.explanation)
+        self.selected_region.setText(info.region_plain)
 
     def _set_selected(self, label: int | None) -> None:
         self.selected_label = label
         if label is not None:
             self._display_info(label, temporary=False)
             return
-        self.selected_code.setText("—")
-        self.selected_name.setText("Hover over a vertebra")
-        self.selected_region.setText(
-            "Move the pointer over the 3D model to identify anatomy. Click to keep a vertebra selected."
-        )
-        self.selected_explanation.setText("")
+        self.selected_code.setText("")
+        self.selected_name.setText("")
+        self.selected_region.setText("")
 
     @Slot()
     def reset_camera(self) -> None:
@@ -477,23 +451,25 @@ class VoxelScoutWindow(QMainWindow):
     def export_image(self) -> None:
         if self.case is None:
             return
-        default = f"{self.case.name}_3d_spine.png"
-        filename, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export current 3D view",
-            str(Path.cwd() / default),
-            "PNG image (*.png)",
-        )
-        if not filename:
-            return
+        self._auto_rotation_paused = True
         try:
+            default = f"{self.case.name}_3d_spine.png"
+            filename, _ = QFileDialog.getSaveFileName(
+                self,
+                "Export current 3D view",
+                str(Path.cwd() / default),
+                "PNG image (*.png)",
+            )
+            if not filename:
+                return
             self.plotter.screenshot(filename, transparent_background=False)
         except Exception as error:
             QMessageBox.critical(self, "Export failed", str(error))
-            return
-        self.status.setText(f"Exported {Path(filename).name}")
+        finally:
+            self._auto_rotation_paused = False
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt API
+        self._rotation_timer.stop()
         if self._load_thread is not None and self._load_thread.isRunning():
             self._load_thread.requestInterruption()
             self._load_thread.quit()
