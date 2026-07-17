@@ -32,6 +32,7 @@ voxelscout-viewer = "voxelscout.desktop_app:main"
 voxelscout-inspect = "voxelscout.inspect_case:main"
 voxelscout-inventory = "voxelscout.build_inventory:main"
 voxelscout-preprocess = "voxelscout.preprocess_case:main"
+voxelscout-prepare-nnunet = "voxelscout.prepare_nnunet:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

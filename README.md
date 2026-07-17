@@ -86,6 +86,67 @@ data/raw/dataset-02validation/
 Medical images, masks, model weights, generated screenshots, and patient data are
 excluded from Git.
 
+## Prepare VerSe 2020 for nnU-Net v2
+
+VoxelScout includes a deterministic dataset preparation command. It copies CT
+files without reorientation, resampling, normalization, or recompression. It
+preserves vertebra identities and only remaps official VerSe label `28` (T13) to
+consecutive training label `26`. The official validation cases remain outside
+`imagesTr` as a true holdout set.
+
+Install the project itself; nnU-Net, MONAI, and PyTorch are not required for this
+step:
+
+```powershell
+Set-Location "C:\path\to\VoxelScout"
+python -m pip install -e .
+```
+
+Validate and preview every planned case without writing files:
+
+```powershell
+voxelscout-prepare-nnunet `
+  --training-root "D:\datasets\verse20training" `
+  --validation-root "D:\datasets\verse20validation" `
+  --nnunet-raw "D:\nnUNet\nnUNet_raw" `
+  --holdout-output "D:\nnUNet\verse20_holdout" `
+  --dry-run
+```
+
+Run the real preparation after the dry run succeeds:
+
+```powershell
+voxelscout-prepare-nnunet `
+  --training-root "D:\datasets\verse20training" `
+  --validation-root "D:\datasets\verse20validation" `
+  --nnunet-raw "D:\nnUNet\nnUNet_raw" `
+  --holdout-output "D:\nnUNet\verse20_holdout"
+```
+
+The validation argument is optional. When supplied, its subjects are checked
+against the training subjects and written only to the separate holdout tree.
+The command produces:
+
+```text
+D:\nnUNet\nnUNet_raw\Dataset501_VerSe20\
+|-- imagesTr\VerSe20_CASE_0000.nii.gz
+|-- labelsTr\VerSe20_CASE.nii.gz
+|-- dataset.json
+|-- label_mapping.json
+|-- manifest.csv
+`-- preparation_summary.json
+
+D:\nnUNet\verse20_holdout\
+|-- images\VerSe20_CASE_0000.nii.gz
+`-- labels\VerSe20_CASE.nii.gz
+```
+
+`label_mapping.json` contains both VerSe-to-training and
+training-to-VerSe mappings, including prediction label `26` back to VoxelScout
+label `28`. Existing compatible files are reused. Incompatible CTs, labels, or
+metadata are never silently overwritten. This command prepares data only; it
+does not run nnU-Net planning, preprocessing, or training.
+
 ## Research tools
 
 The older preprocessing experiments remain optional and are not exposed in the

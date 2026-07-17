@@ -9,8 +9,8 @@ from pathlib import Path
 
 import numpy as np
 import pyvista as pv
-from PySide6.QtCore import QObject, QPoint, Qt, QThread, QTimer, Signal, Slot
-from PySide6.QtGui import QCloseEvent, QCursor
+from PySide6.QtCore import QObject, QPoint, QRectF, Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtGui import QColor, QCloseEvent, QCursor, QPainter, QPaintEvent
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSizePolicy,
-    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -69,6 +68,17 @@ class CaseLoader(QObject):
             self.failed.emit(str(error))
             return
         self.finished.emit(case)
+
+
+class PillFrame(QFrame):
+    """Paint a stable antialiased pill independent of native-window styling."""
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#e7e8ee"))
+        painter.drawRoundedRect(QRectF(self.rect()), 21.0, 21.0)
 
 
 class VoxelScoutWindow(QMainWindow):
@@ -151,18 +161,6 @@ class VoxelScoutWindow(QMainWindow):
         info_layout = QVBoxLayout(info_panel)
         info_layout.setContentsMargins(18, 18, 18, 18)
         info_layout.setSpacing(8)
-
-        self.selected_code = QLabel("")
-        self.selected_code.setObjectName("selectedCode")
-        info_layout.addWidget(self.selected_code)
-        self.selected_name = QLabel("")
-        self.selected_name.setObjectName("selectedName")
-        self.selected_name.setWordWrap(True)
-        info_layout.addWidget(self.selected_name)
-        self.selected_region = QLabel("")
-        self.selected_region.setObjectName("region")
-        self.selected_region.setWordWrap(True)
-        info_layout.addWidget(self.selected_region)
         info_layout.addStretch(1)
         sidebar_layout.addWidget(info_panel, 1)
         content_layout.addWidget(sidebar)
@@ -176,6 +174,33 @@ class VoxelScoutWindow(QMainWindow):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
         viewer_layout.addWidget(self.plotter.interactor)
+
+        self.info_pill = PillFrame(
+            self,
+            Qt.WindowType.Tool
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowDoesNotAcceptFocus,
+        )
+        self.info_pill.setObjectName("infoPill")
+        self.info_pill.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        self.info_pill.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.info_pill.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.info_pill.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.info_pill.setFixedHeight(42)
+        self.info_pill.setMaximumWidth(580)
+        pill_layout = QHBoxLayout(self.info_pill)
+        pill_layout.setContentsMargins(18, 0, 18, 0)
+        pill_layout.setSpacing(10)
+        self.pill_code = QLabel("")
+        self.pill_code.setObjectName("pillCode")
+        pill_layout.addWidget(self.pill_code)
+        self.pill_name = QLabel("")
+        self.pill_name.setObjectName("pillName")
+        pill_layout.addWidget(self.pill_name)
+        self.pill_region = QLabel("")
+        self.pill_region.setObjectName("pillRegion")
+        pill_layout.addWidget(self.pill_region)
+        self.info_pill.hide()
         content_layout.addWidget(viewer_frame, 1)
         outer.addWidget(content, 1)
 
@@ -201,9 +226,10 @@ class VoxelScoutWindow(QMainWindow):
         QFrame#controlsPanel, QFrame#infoPanel {{ background: {PANEL};
             border: 1px solid #203447; border-radius: 8px; }}
         QFrame#viewerFrame {{ background: #050a10; border: 1px solid #203447; border-radius: 8px; }}
-        QLabel#selectedCode {{ color: {GOLD}; font-size: 42px; font-weight: 750; }}
-        QLabel#selectedName {{ color: white; font-size: 17px; font-weight: 650; }}
-        QLabel#region {{ color: {ACCENT}; font-size: 14px; font-weight: 600; }}
+        QFrame#infoPill {{ background: #e7e8ee; border: none; border-radius: 21px; }}
+        QLabel#pillCode {{ color: #252a34; font-size: 15px; font-weight: 700; }}
+        QLabel#pillName {{ color: #3e4552; font-size: 13px; font-weight: 600; }}
+        QLabel#pillRegion {{ color: #747d8c; font-size: 12px; font-weight: 500; }}
         """
 
     def _configure_plotter(self) -> None:
@@ -398,13 +424,9 @@ class VoxelScoutWindow(QMainWindow):
             self._refresh_actor(previous)
         if label is not None:
             self._refresh_actor(label)
-            x, y = self._vtk_interactor().GetEventPosition()
-            point = self.plotter.mapToGlobal(QPoint(int(x), self.plotter.height() - int(y)))
-            QToolTip.showText(point, vertebra_info(label).tooltip, self.plotter)
             if self.selected_label is None:
                 self._display_info(label, temporary=True)
         else:
-            QToolTip.hideText()
             if self.selected_label is None:
                 self._set_selected(None)
         self.plotter.render()
@@ -436,23 +458,49 @@ class VoxelScoutWindow(QMainWindow):
 
     def _display_info(self, label: int, *, temporary: bool) -> None:
         info = vertebra_info(label)
-        self.selected_code.setText(info.code)
-        self.selected_name.setText(info.anatomical_name)
-        self.selected_region.setText(info.region_plain)
+        self.pill_code.setText(info.code)
+        self.pill_name.setText(info.anatomical_name)
+        self.pill_region.setText(info.region_plain)
+        self.info_pill.adjustSize()
+        self._position_info_pill()
+        self.info_pill.show()
+        self.info_pill.raise_()
+
+    def _position_info_pill(self) -> None:
+        viewport = self.plotter.interactor
+        origin = viewport.mapToGlobal(QPoint(0, 0))
+        pill_x = origin.x() + max(16, (viewport.width() - self.info_pill.width()) // 2)
+        self.info_pill.move(pill_x, origin.y() + 16)
 
     def _set_selected(self, label: int | None) -> None:
+        previous = self.selected_label
         self.selected_label = label
+        if previous is not None and previous != label:
+            self._refresh_actor(previous)
         if label is not None:
             self._display_info(label, temporary=False)
             return
-        self.selected_code.setText("")
-        self.selected_name.setText("")
-        self.selected_region.setText("")
+        self.info_pill.hide()
+
+    def _clear_selection(self) -> None:
+        affected = {self.selected_label, self.hovered_label}
+        self.selected_label = None
+        self.hovered_label = None
+        for label in affected:
+            if label is not None:
+                self._refresh_actor(label)
+        self.info_pill.hide()
+
+    def moveEvent(self, event: object) -> None:  # noqa: N802 - Qt API
+        super().moveEvent(event)
+        if hasattr(self, "info_pill") and self.info_pill.isVisible():
+            QTimer.singleShot(0, self._position_info_pill)
 
     @Slot()
     def reset_camera(self) -> None:
         if self.case is None:
             return
+        self._clear_selection()
         self.plotter.view_isometric()
         self.plotter.reset_camera()
         default_distance = float(self.plotter.camera.GetDistance())
@@ -482,6 +530,7 @@ class VoxelScoutWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt API
         self._rotation_timer.stop()
+        self.info_pill.hide()
         if self._load_thread is not None and self._load_thread.isRunning():
             self._load_thread.requestInterruption()
             self._load_thread.quit()

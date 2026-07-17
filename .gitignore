@@ -17,6 +17,12 @@ Thumbs.db
 # Medical images and datasets
 data/*
 !data/README.md
+datasets/
+holdout/
+nnUNet_raw/
+nnUNet_preprocessed/
+nnUNet_results/
+Dataset[0-9][0-9][0-9]_*/
 *.nii
 *.nii.gz
 *.dcm
@@ -24,11 +30,16 @@ data/*
 # Training artifacts
 outputs/
 checkpoints/
+models/
+predictions/
+inference_outputs/
 runs/
 wandb/
 *.pt
 *.pth
 *.ckpt
+*.onnx
+*.safetensors
 
 # Build artifacts
 build/
