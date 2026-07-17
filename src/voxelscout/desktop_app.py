@@ -37,7 +37,7 @@ from voxelscout.desktop_data import (
 )
 
 
-BACKGROUND = "#09121d"
+BACKGROUND = "#fdfeff"
 PANEL = "#111e2b"
 PANEL_ALT = "#162738"
 TEXT = "#edf4fa"
@@ -86,7 +86,7 @@ class VoxelScoutWindow(QMainWindow):
         self._load_thread: QThread | None = None
         self._load_worker: CaseLoader | None = None
 
-        self.setWindowTitle("VoxelScout · Interactive 3D Spine")
+        self.setWindowTitle("VoxelS")
         self.resize(1320, 820)
         self.setMinimumSize(980, 640)
         self._build_ui()
@@ -106,13 +106,10 @@ class VoxelScoutWindow(QMainWindow):
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(24, 12, 22, 12)
 
-        brand = QLabel("VOXEL<span style='color:#31c4b3'>SCOUT</span>")
+        brand = QLabel("VOXEL<span style='color:#31c4b3'>S</span>")
         brand.setObjectName("brand")
         brand.setTextFormat(Qt.TextFormat.RichText)
         header_layout.addWidget(brand)
-        subtitle = QLabel("INTERACTIVE 3D SPINE")
-        subtitle.setObjectName("subtitle")
-        header_layout.addWidget(subtitle)
         header_layout.addStretch(1)
 
         self.progress = QProgressBar()
@@ -121,7 +118,7 @@ class VoxelScoutWindow(QMainWindow):
         self.progress.hide()
         header_layout.addWidget(self.progress)
 
-        self.open_button = QPushButton("Open CT + segmentation")
+        self.open_button = QPushButton("Open Files")
         self.open_button.setObjectName("primaryButton")
         self.open_button.clicked.connect(self.open_case)
         header_layout.addWidget(self.open_button)
@@ -131,7 +128,7 @@ class VoxelScoutWindow(QMainWindow):
         self.reset_button.clicked.connect(self.reset_camera)
         header_layout.addWidget(self.reset_button)
 
-        self.export_button = QPushButton("Export 3D image")
+        self.export_button = QPushButton("Export")
         self.export_button.setEnabled(False)
         self.export_button.clicked.connect(self.export_image)
         header_layout.addWidget(self.export_button)
@@ -148,14 +145,6 @@ class VoxelScoutWindow(QMainWindow):
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setContentsMargins(20, 20, 20, 20)
         sidebar_layout.setSpacing(10)
-
-        scan_heading = QLabel("SCAN DETAILS")
-        scan_heading.setObjectName("sectionHeading")
-        sidebar_layout.addWidget(scan_heading)
-        self.scan_name = QLabel("No scan loaded")
-        self.scan_name.setObjectName("scanName")
-        self.scan_name.setWordWrap(True)
-        sidebar_layout.addWidget(self.scan_name)
 
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.HLine)
@@ -184,12 +173,6 @@ class VoxelScoutWindow(QMainWindow):
         sidebar_layout.addWidget(self.selected_explanation)
         sidebar_layout.addStretch(1)
 
-        interaction_hint = QLabel(
-            "Drag to rotate · Wheel to zoom\nMiddle-drag to pan · Click to select"
-        )
-        interaction_hint.setObjectName("hint")
-        interaction_hint.setWordWrap(True)
-        sidebar_layout.addWidget(interaction_hint)
         content_layout.addWidget(sidebar)
 
         viewer_frame = QFrame()
@@ -237,7 +220,6 @@ class VoxelScoutWindow(QMainWindow):
         QFrame#sidebar {{ background: {PANEL}; border: 1px solid #203447; border-radius: 8px; }}
         QFrame#viewerFrame {{ background: #050a10; border: 1px solid #203447; border-radius: 8px; }}
         QLabel#sectionHeading {{ color: {ACCENT}; font-size: 11px; font-weight: 700; }}
-        QLabel#scanName {{ color: white; font-size: 17px; font-weight: 650; }}
         QLabel#selectedCode {{ color: {GOLD}; font-size: 42px; font-weight: 750; }}
         QLabel#selectedName {{ color: white; font-size: 17px; font-weight: 650; }}
         QLabel#region {{ color: {ACCENT}; font-size: 14px; font-weight: 600; }}
@@ -250,7 +232,7 @@ class VoxelScoutWindow(QMainWindow):
         """
 
     def _configure_plotter(self) -> None:
-        self.plotter.set_background("#050a10")
+        self.plotter.set_background("#ffffff")
         self.plotter.enable_anti_aliasing("fxaa")
         self._picker = vtkCellPicker()
         self._picker.SetTolerance(0.0008)
@@ -353,7 +335,7 @@ class VoxelScoutWindow(QMainWindow):
 
     def _populate_scene(self, case: SegmentedCase) -> None:
         self.plotter.clear()
-        self.plotter.set_background("#050a10")
+        self.plotter.set_background("#ffffff")
         self.actor_labels.clear()
         self.label_actors.clear()
         self.base_colours.clear()
