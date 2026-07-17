@@ -86,10 +86,10 @@ class VoxelScoutWindow(QMainWindow):
         self._load_thread: QThread | None = None
         self._load_worker: CaseLoader | None = None
         self._auto_rotation_paused = False
+        self._zoom_limits: tuple[float, float] | None = None
 
         self.setWindowTitle("Lenx")
-        self.resize(960, 680)
-        self.setMinimumSize(760, 520)
+        self.setFixedSize(960, 680)
         self._build_ui()
         self._configure_plotter()
         self._show_empty_scene()
@@ -106,12 +106,11 @@ class VoxelScoutWindow(QMainWindow):
         content_layout.setContentsMargins(10, 10, 10, 10)
         content_layout.setSpacing(10)
 
-        sidebar = QFrame()
-        sidebar.setObjectName("sidebar")
+        sidebar = QWidget()
         sidebar.setFixedWidth(220)
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
-        sidebar_layout.setSpacing(0)
+        sidebar_layout.setSpacing(10)
 
         controls_panel = QFrame()
         controls_panel.setObjectName("controlsPanel")
@@ -120,20 +119,20 @@ class VoxelScoutWindow(QMainWindow):
         controls_layout.setSpacing(8)
 
         self.open_button = QPushButton("Open Files")
-        self.open_button.setObjectName("rainbowOpen")
+        self.open_button.setObjectName("redButton")
         self.open_button.setFixedHeight(40)
         self.open_button.clicked.connect(self.open_case)
         controls_layout.addWidget(self.open_button)
 
         self.reset_button = QPushButton("Reset")
-        self.reset_button.setObjectName("rainbowReset")
+        self.reset_button.setObjectName("yellowButton")
         self.reset_button.setFixedHeight(40)
         self.reset_button.setEnabled(False)
         self.reset_button.clicked.connect(self.reset_camera)
         controls_layout.addWidget(self.reset_button)
 
         self.export_button = QPushButton("Export")
-        self.export_button.setObjectName("rainbowExport")
+        self.export_button.setObjectName("blueButton")
         self.export_button.setFixedHeight(40)
         self.export_button.setEnabled(False)
         self.export_button.clicked.connect(self.export_image)
@@ -146,11 +145,6 @@ class VoxelScoutWindow(QMainWindow):
         controls_layout.addWidget(self.progress)
         controls_layout.addStretch(1)
         sidebar_layout.addWidget(controls_panel, 1)
-
-        divider = QFrame()
-        divider.setObjectName("sidebarDivider")
-        divider.setFixedHeight(1)
-        sidebar_layout.addWidget(divider)
 
         info_panel = QFrame()
         info_panel.setObjectName("infoPanel")
@@ -194,22 +188,18 @@ class VoxelScoutWindow(QMainWindow):
         QWidget#root {{ background: {BACKGROUND}; color: {TEXT}; font-family: 'Segoe UI'; }}
         QPushButton {{ background: {PANEL_ALT}; color: {TEXT}; border: 1px solid #294159;
                        border-radius: 6px; padding: 7px 12px; font-weight: 600; }}
-        QPushButton#rainbowOpen {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-            stop:0 #ff5f6d, stop:1 #ff8a5b); border: none; color: white; }}
-        QPushButton#rainbowReset {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-            stop:0 #ffd166, stop:1 #06d6a0); border: none; color: #0d1926; }}
-        QPushButton#rainbowExport {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-            stop:0 #3a86ff, stop:1 #8338ec); border: none; color: white; }}
-        QPushButton#rainbowOpen:hover, QPushButton#rainbowReset:hover,
-        QPushButton#rainbowExport:hover {{ border: 2px solid rgba(255, 255, 255, 150); }}
-        QPushButton#rainbowOpen:disabled, QPushButton#rainbowReset:disabled,
-        QPushButton#rainbowExport:disabled {{ color: #68798a; background: #1b2a38; }}
+        QPushButton#redButton {{ background: #ef476f; border: none; color: white; }}
+        QPushButton#yellowButton {{ background: #ffd166; border: none; color: #0d1926; }}
+        QPushButton#blueButton {{ background: #3a86ff; border: none; color: white; }}
+        QPushButton#redButton:hover, QPushButton#yellowButton:hover,
+        QPushButton#blueButton:hover {{ border: 2px solid rgba(255, 255, 255, 150); }}
+        QPushButton#redButton:disabled, QPushButton#yellowButton:disabled,
+        QPushButton#blueButton:disabled {{ color: #68798a; background: #1b2a38; }}
         QProgressBar {{ color: {TEXT}; background: #0b1520; border: 1px solid #294159;
                         border-radius: 5px; text-align: center; height: 18px; }}
         QProgressBar::chunk {{ background: {ACCENT}; border-radius: 4px; }}
-        QFrame#sidebar {{ background: {PANEL}; border: 1px solid #203447; border-radius: 8px; }}
-        QFrame#controlsPanel, QFrame#infoPanel {{ background: transparent; border: none; }}
-        QFrame#sidebarDivider {{ background: #294159; border: none; }}
+        QFrame#controlsPanel, QFrame#infoPanel {{ background: {PANEL};
+            border: 1px solid #203447; border-radius: 8px; }}
         QFrame#viewerFrame {{ background: #050a10; border: 1px solid #203447; border-radius: 8px; }}
         QLabel#selectedCode {{ color: {GOLD}; font-size: 42px; font-weight: 750; }}
         QLabel#selectedName {{ color: white; font-size: 17px; font-weight: 650; }}
@@ -241,16 +231,36 @@ class VoxelScoutWindow(QMainWindow):
     def _auto_rotate(self) -> None:
         if (
             self.case is None
-            or self._auto_rotation_paused
             or not self.isVisible()
             or self.isMinimized()
         ):
+            return
+        self._clamp_zoom()
+        if self._auto_rotation_paused:
             return
         viewport = self.plotter.interactor
         cursor_position = viewport.mapFromGlobal(QCursor.pos())
         if viewport.rect().contains(cursor_position):
             return
         self.plotter.camera.Azimuth(0.35)
+        self.plotter.render()
+
+    def _clamp_zoom(self) -> None:
+        if self._zoom_limits is None:
+            return
+        camera = self.plotter.camera
+        focal_point = np.asarray(camera.GetFocalPoint(), dtype=float)
+        position = np.asarray(camera.GetPosition(), dtype=float)
+        offset = position - focal_point
+        distance = float(np.linalg.norm(offset))
+        if distance <= 0.0:
+            return
+        minimum, maximum = self._zoom_limits
+        clamped = min(max(distance, minimum), maximum)
+        if np.isclose(distance, clamped):
+            return
+        camera.SetPosition(*(focal_point + offset * (clamped / distance)))
+        self.plotter.reset_camera_clipping_range()
         self.plotter.render()
 
     @Slot()
@@ -445,6 +455,8 @@ class VoxelScoutWindow(QMainWindow):
             return
         self.plotter.view_isometric()
         self.plotter.reset_camera()
+        default_distance = float(self.plotter.camera.GetDistance())
+        self._zoom_limits = (default_distance * 0.8, default_distance * 1.8)
         self.plotter.render()
 
     @Slot()
