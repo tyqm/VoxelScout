@@ -23,6 +23,7 @@ REGION_COLOURS = {
     "Lumbar spine": "#e58a35",
     "Unmapped region": "#9b7ed0",
 }
+MIN_LABEL_VOXELS = 50
 
 
 @dataclass(frozen=True)
@@ -129,6 +130,8 @@ def _label_bounds(mask: np.ndarray) -> dict[int, Bounds3D]:
     result: dict[int, Bounds3D] = {}
     for label in labels:
         selected = foreground_labels == label
+        if int(np.count_nonzero(selected)) < MIN_LABEL_VOXELS:
+            continue
         result[label] = tuple(
             slice(
                 int(coordinates[axis][selected].min()),
@@ -174,13 +177,28 @@ def _mesh_for_label(
     from skimage.measure import marching_cubes
 
     binary = np.pad(mask[bounds] == label, 1)
-    vertices, faces, _normals, _values = marching_cubes(
-        binary.astype(np.uint8),
-        level=0.5,
-        spacing=spacing,
-        step_size=max(1, int(sample_step)),
-        allow_degenerate=False,
-    )
+    binary = binary.astype(np.uint8)
+    step_size = max(1, int(sample_step))
+    try:
+        vertices, faces, _normals, _values = marching_cubes(
+            binary,
+            level=0.5,
+            spacing=spacing,
+            step_size=step_size,
+            allow_degenerate=False,
+        )
+    except (RuntimeError, ValueError):
+        if step_size == 1:
+            raise
+        vertices, faces, _normals, _values = marching_cubes(
+            binary,
+            level=0.5,
+            spacing=spacing,
+            step_size=1,
+            allow_degenerate=False,
+        )
+    if not len(vertices) or not len(faces):
+        raise ValueError(f"Label {label} did not produce a valid surface")
     offset = (
         np.asarray([axis.start or 0 for axis in bounds], dtype=float) - 1.0
     ) * np.asarray(spacing)
@@ -245,8 +263,8 @@ def load_segmented_case(
             12 + int(82 * (index - 1) / len(labels)),
             f"Building {vertebra_info(label).code} mesh ({index}/{len(labels)})",
         )
-        meshes.append(
-            _mesh_for_label(
+        try:
+            mesh = _mesh_for_label(
                 mask,
                 label,
                 bounds[label],
@@ -254,7 +272,9 @@ def load_segmented_case(
                 sample_step,
                 target_faces_per_vertebra,
             )
-        )
+        except (RuntimeError, ValueError):
+            continue
+        meshes.append(mesh)
 
     report(96, "Finalising 3D model")
     result = SegmentedCase(
