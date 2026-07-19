@@ -8,7 +8,8 @@ understand visible vertebrae through direct exploration.
 
 The Windows application deliberately focuses on one workflow:
 
-1. Open a NIfTI CT and its matching VerSe segmentation mask.
+1. Open a NIfTI CT. VoxelScout uses a trusted companion mask when present and
+   otherwise runs the configured nnU-Net backend.
 2. Wait while one simplified mesh is generated and cached for each vertebra.
 3. Rotate, zoom, and pan the coloured 3D spine.
 4. Hover to see the vertebra code, anatomical name, and spinal region.
@@ -36,12 +37,58 @@ For a scripted launch with a known VerSe pair:
 python app.py --ct path\to\scan_ct.nii.gz --mask path\to\scan_seg-vert_msk.nii.gz
 ```
 
+For CT-only automatic inference:
+
+```powershell
+python app.py --ct path\to\scan_ct.nii.gz
+```
+
+## Segmentation modes
+
+Trusted-mask mode remains the fastest and most reproducible path. Supply
+`--mask`, or place a matching `*_seg-vert_msk.nii.gz` beside the CT or in the
+official VerSe `derivatives/sub-*` location. A discovered trusted mask is always
+used before automatic inference.
+
+CT-only mode uses an external nnU-Net v2 command in the background. nnU-Net,
+PyTorch, and model weights are intentionally not mandatory viewer dependencies.
+Configure the verified VerSe model from PowerShell before starting VoxelScout:
+
+```powershell
+$env:VOXELSCOUT_NNUNET_RESULTS = "D:\nnUNet\nnUNet_results"
+$env:VOXELSCOUT_NNUNET_DATASET = "001"
+$env:VOXELSCOUT_NNUNET_CONFIGURATION = "3d_lowres"
+$env:VOXELSCOUT_NNUNET_FOLDS = "0"
+$env:VOXELSCOUT_NNUNET_PLANS = "nnUNetResEncUNetMPlans"
+$env:VOXELSCOUT_NNUNET_TRAINER = "nnUNetTrainer"
+$env:VOXELSCOUT_NNUNET_CHECKPOINT = "checkpoint_final.pth"
+python app.py --ct "D:\scans\scan_ct.nii.gz"
+```
+
+The defaults above match the locally documented pretrained VerSe model and its
+`nnUNetv2_predict` command. `VOXELSCOUT_NNUNET_COMMAND` can select another
+executable, and `VOXELSCOUT_CACHE_DIR` can relocate cached predictions. The
+results directory must use nnU-Net's standard layout, for example:
+
+```text
+nnUNet_results/
+`-- Dataset001_VerSe/
+    `-- nnUNetTrainer__nnUNetResEncUNetMPlans__3d_lowres/
+        `-- fold_0/checkpoint_final.pth
+```
+
+If the command, model directory, or checkpoint is unavailable, loading stops
+with a specific error; VoxelScout never fabricates a mask or downloads a model.
+Predictions are cached by CT modification state and backend/model configuration,
+so changing the CT or configuration does not reuse a stale result. Prediction
+label `26` is converted back to VerSe/VoxelScout label `28` before mesh creation.
+
 ## Performance design
 
 - PySide6 provides a native Windows window; no browser or local web server opens.
 - PyVistaQt/VTK performs camera interaction and actor picking in the viewport.
-- The CT voxel array is not read for the default 3D workflow; only its header is
-  used to validate shape, affine, spacing, and orientation.
+- CT and segmentation geometry are validated before mesh construction; the CT
+  is not resampled or normalized by VoxelScout.
 - The compact integer segmentation is released after mesh construction.
 - Marching Cubes runs separately on each vertebra's tight bounding box with a
   reduced sampling step.
@@ -63,9 +110,9 @@ machine; the benchmark prints the local measurements.
 
 ## Current limitation
 
-VoxelScout does not yet segment an arbitrary CT. A trusted matching mask is
-required. Integrating a pretrained vertebra segmentation model is future work;
-the current public demonstration uses VerSe CT/mask pairs.
+Automatic segmentation requires a separately installed and configured
+pretrained nnU-Net model. DICOM input and diagnostic or abnormality detection
+are not supported.
 
 The application does not diagnose fractures, tumours, or other abnormalities and
 does not replace interpretation by a qualified healthcare professional.
@@ -83,8 +130,8 @@ data/raw/dataset-02validation/
 └── derivatives/sub-gl017/sub-gl017_seg-vert_msk.nii.gz
 ```
 
-Medical images, masks, model weights, generated screenshots, and patient data are
-excluded from Git.
+Medical images, cached predictions, masks, model weights, generated screenshots,
+and patient data are excluded from Git.
 
 ## Prepare VerSe 2020 for nnU-Net v2
 

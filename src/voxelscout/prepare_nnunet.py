@@ -17,11 +17,16 @@ from typing import Callable, Iterable, Sequence
 import nibabel as nib
 import numpy as np
 
+from voxelscout.inference.labels import (
+    SUPPORTED_VERSE_LABELS,
+    TRAINING_TO_VERSE,
+    VERSE_TO_TRAINING,
+    verse_to_training_labels,
+)
+
 
 DATASET_NAME = "Dataset501_VerSe20"
-SUPPORTED_SOURCE_LABELS = frozenset((*range(26), 28))
-VERSE_TO_TRAINING = {**{value: value for value in range(26)}, 28: 26}
-TRAINING_TO_VERSE = {**{value: value for value in range(26)}, 26: 28}
+SUPPORTED_SOURCE_LABELS = SUPPORTED_VERSE_LABELS
 AFFINE_ATOL = 1e-3
 AFFINE_RTOL = 1e-5
 
@@ -162,13 +167,7 @@ def _source_label_values(data: np.ndarray) -> tuple[int, ...]:
 
 def remap_verse_labels(data: np.ndarray) -> np.ndarray:
     """Validate VerSe labels and remap source label 28 to consecutive label 26."""
-    values = np.asanyarray(data)
-    labels = _source_label_values(values)
-    converted = values.astype(np.uint8, copy=False)
-    if 28 in labels:
-        converted = converted.copy()
-        converted[values == 28] = 26
-    return converted
+    return verse_to_training_labels(data)
 
 
 def validate_case(case: SourceCase) -> ValidatedCase:

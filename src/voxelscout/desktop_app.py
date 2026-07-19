@@ -31,9 +31,9 @@ from vtkmodules.vtkRenderingCore import vtkCellPicker
 from voxelscout.anatomy import vertebra_info
 from voxelscout.desktop_data import (
     SegmentedCase,
-    find_companion_mask,
-    load_segmented_case,
 )
+from voxelscout.inference.backend import SegmentationBackend
+from voxelscout.inference.workflow import load_case_for_ct
 
 
 BACKGROUND = "#f9fafc"
@@ -51,17 +51,24 @@ class CaseLoader(QObject):
     finished = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, ct_path: Path, mask_path: Path) -> None:
+    def __init__(
+        self,
+        ct_path: Path,
+        mask_path: Path | None = None,
+        backend: SegmentationBackend | None = None,
+    ) -> None:
         super().__init__()
         self.ct_path = ct_path
         self.mask_path = mask_path
+        self.backend = backend
 
     @Slot()
     def run(self) -> None:
         try:
-            case = load_segmented_case(
+            case = load_case_for_ct(
                 self.ct_path,
                 self.mask_path,
+                backend=self.backend,
                 progress=lambda value, message: self.progress.emit(value, message),
             )
         except Exception as error:
@@ -84,8 +91,9 @@ class PillFrame(QFrame):
 class VoxelScoutWindow(QMainWindow):
     """One-window 3D vertebra explorer for education and communication."""
 
-    def __init__(self) -> None:
+    def __init__(self, backend: SegmentationBackend | None = None) -> None:
         super().__init__()
+        self._backend = backend
         self.case: SegmentedCase | None = None
         self.actor_labels: dict[str, int] = {}
         self.label_actors: dict[int, object] = {}
@@ -128,7 +136,7 @@ class VoxelScoutWindow(QMainWindow):
         controls_layout.setContentsMargins(18, 18, 18, 18)
         controls_layout.setSpacing(8)
 
-        self.open_button = QPushButton("Open Files")
+        self.open_button = QPushButton("Open CT")
         self.open_button.setObjectName("redButton")
         self.open_button.setFixedHeight(40)
         self.open_button.clicked.connect(self.open_case)
@@ -153,6 +161,11 @@ class VoxelScoutWindow(QMainWindow):
         self.progress.setFixedHeight(16)
         self.progress.hide()
         controls_layout.addWidget(self.progress)
+        self.status_label = QLabel("")
+        self.status_label.setObjectName("statusLabel")
+        self.status_label.setWordWrap(True)
+        self.status_label.hide()
+        controls_layout.addWidget(self.status_label)
         controls_layout.addStretch(1)
         sidebar_layout.addWidget(controls_panel, 1)
 
@@ -230,6 +243,7 @@ class VoxelScoutWindow(QMainWindow):
         QLabel#pillCode {{ color: #252a34; font-size: 15px; font-weight: 700; }}
         QLabel#pillName {{ color: #3e4552; font-size: 13px; font-weight: 600; }}
         QLabel#pillRegion {{ color: #747d8c; font-size: 12px; font-weight: 500; }}
+        QLabel#statusLabel {{ color: {MUTED}; font-size: 11px; }}
         """
 
     def _configure_plotter(self) -> None:
@@ -299,25 +313,9 @@ class VoxelScoutWindow(QMainWindow):
         )
         if not ct_name:
             return
-        ct_path = Path(ct_name)
-        companion = find_companion_mask(ct_path)
-        start = str(companion if companion is not None else ct_path.parent)
-        mask_name, _ = QFileDialog.getOpenFileName(
-            self,
-            "Open matching vertebra segmentation",
-            start,
-            "NIfTI segmentation (*.nii *.nii.gz);;All files (*.*)",
-        )
-        if not mask_name:
-            QMessageBox.information(
-                self,
-                "Segmentation required",
-                "VoxelScout currently needs a trusted vertebra segmentation mask to build the 3D model.",
-            )
-            return
-        self._start_loading(ct_path, Path(mask_name))
+        self._start_loading(Path(ct_name))
 
-    def _start_loading(self, ct_path: Path, mask_path: Path) -> None:
+    def _start_loading(self, ct_path: Path, mask_path: Path | None = None) -> None:
         if self._load_thread is not None and self._load_thread.isRunning():
             return
         self.open_button.setEnabled(False)
@@ -325,9 +323,11 @@ class VoxelScoutWindow(QMainWindow):
         self.reset_button.setEnabled(False)
         self.progress.setValue(0)
         self.progress.show()
+        self.status_label.setText("Reading CT")
+        self.status_label.show()
 
         thread = QThread(self)
-        worker = CaseLoader(ct_path, mask_path)
+        worker = CaseLoader(ct_path, mask_path, self._backend)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.progress.connect(self._on_progress)
@@ -343,13 +343,15 @@ class VoxelScoutWindow(QMainWindow):
         thread.start()
 
     @Slot(int, str)
-    def _on_progress(self, value: int, _message: str) -> None:
+    def _on_progress(self, value: int, message: str) -> None:
         self.progress.setValue(value)
+        self.status_label.setText(message)
 
     @Slot(object)
     def _on_case_loaded(self, case: SegmentedCase) -> None:
         self.case = case
         self.progress.hide()
+        self.status_label.hide()
         self.open_button.setEnabled(True)
         self.export_button.setEnabled(True)
         self.reset_button.setEnabled(True)
@@ -359,7 +361,10 @@ class VoxelScoutWindow(QMainWindow):
     @Slot(str)
     def _on_load_failed(self, message: str) -> None:
         self.progress.hide()
+        self.status_label.hide()
         self.open_button.setEnabled(True)
+        self.export_button.setEnabled(self.case is not None)
+        self.reset_button.setEnabled(self.case is not None)
         QMessageBox.critical(self, "Unable to open case", message)
 
     @Slot()
@@ -544,15 +549,15 @@ def main() -> None:
     parser.add_argument("--ct", type=Path, help="NIfTI CT volume to open")
     parser.add_argument("--mask", type=Path, help="Matching labelled segmentation")
     args, qt_args = parser.parse_known_args()
-    if (args.ct is None) != (args.mask is None):
-        parser.error("--ct and --mask must be supplied together")
+    if args.mask is not None and args.ct is None:
+        parser.error("--mask requires --ct")
 
     app = QApplication.instance() or QApplication([sys.argv[0], *qt_args])
     app.setApplicationName("VoxelScout")
     app.setStyle("Fusion")
     window = VoxelScoutWindow()
     window.show()
-    if args.ct is not None and args.mask is not None:
+    if args.ct is not None:
         QTimer.singleShot(0, lambda: window._start_loading(args.ct, args.mask))
     raise SystemExit(app.exec())
 

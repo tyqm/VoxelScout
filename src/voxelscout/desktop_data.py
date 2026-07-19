@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -32,6 +33,23 @@ class VertebraMesh:
     vertices: np.ndarray
     faces: np.ndarray
     colour: str
+
+
+@dataclass(frozen=True)
+class CTVolume:
+    data: np.ndarray
+    affine: np.ndarray
+    spacing: tuple[float, float, float]
+    orientation: str
+    source_path: Path
+
+
+@dataclass(frozen=True)
+class SegmentationVolume:
+    labels: np.ndarray
+    affine: np.ndarray
+    source: str
+    source_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -106,6 +124,44 @@ def _cache_key(
         str(mask_path.resolve()),
         mask_stat.st_mtime_ns,
         mask_stat.st_size,
+        int(sample_step),
+        int(target_faces),
+    )
+
+
+def _array_digest(array: np.ndarray) -> str:
+    values = np.ascontiguousarray(array)
+    digest = hashlib.sha256()
+    digest.update(str(values.shape).encode("ascii"))
+    digest.update(values.dtype.str.encode("ascii"))
+    digest.update(values.tobytes())
+    return digest.hexdigest()
+
+
+def _build_cache_key(
+    ct: CTVolume,
+    segmentation: SegmentationVolume,
+    sample_step: int,
+    target_faces: int,
+) -> tuple[object, ...]:
+    ct_path = Path(ct.source_path).resolve()
+    ct_stat = ct_path.stat()
+    if segmentation.source_path is not None:
+        segmentation_path = Path(segmentation.source_path).resolve()
+        segmentation_stat = segmentation_path.stat()
+        segmentation_identity: tuple[object, ...] = (
+            str(segmentation_path),
+            segmentation_stat.st_mtime_ns,
+            segmentation_stat.st_size,
+        )
+    else:
+        segmentation_identity = (_array_digest(segmentation.labels),)
+    return (
+        str(ct_path),
+        ct_stat.st_mtime_ns,
+        ct_stat.st_size,
+        segmentation.source,
+        *segmentation_identity,
         int(sample_step),
         int(target_faces),
     )
@@ -215,37 +271,81 @@ def _mesh_for_label(
     )
 
 
-def load_segmented_case(
+def load_ct_volume(
     ct_path: Path,
+    *,
+    progress: ProgressCallback | None = None,
+) -> CTVolume:
+    """Load a three-dimensional NIfTI CT without resampling or normalization."""
+    report = progress or (lambda _value, _message: None)
+    ct_path = Path(ct_path).resolve()
+    report(4, "Reading CT")
+    image = nib.load(str(ct_path))
+    if len(image.shape) != 3:
+        raise ValueError(f"Expected a 3D CT volume, got shape {image.shape}")
+    data = np.asanyarray(image.dataobj)
+    return CTVolume(
+        data=data,
+        affine=np.asarray(image.affine, dtype=float),
+        spacing=tuple(float(value) for value in nib.affines.voxel_sizes(image.affine)),
+        orientation="".join(nib.aff2axcodes(image.affine)),
+        source_path=ct_path,
+    )
+
+
+def load_segmentation_volume(
     mask_path: Path,
+    *,
+    source: str = "trusted-mask",
+) -> SegmentationVolume:
+    """Load a labelled NIfTI segmentation without changing label identities."""
+    mask_path = Path(mask_path).resolve()
+    image = nib.load(str(mask_path))
+    if len(image.shape) != 3:
+        raise ValueError(f"Expected a 3D segmentation, got shape {image.shape}")
+    return SegmentationVolume(
+        labels=_compact_mask(np.asanyarray(image.dataobj)),
+        affine=np.asarray(image.affine, dtype=float),
+        source=source,
+        source_path=mask_path,
+    )
+
+
+def build_segmented_case(
+    ct: CTVolume,
+    segmentation: SegmentationVolume,
     *,
     sample_step: int = 2,
     target_faces_per_vertebra: int = 12_000,
     progress: ProgressCallback | None = None,
 ) -> SegmentedCase:
-    """Read only the CT header and build one cached mesh per mask label."""
+    """Validate in-memory volumes and build one cached mesh per vertebra label."""
     report = progress or (lambda _value, _message: None)
-    ct_path = Path(ct_path).resolve()
-    mask_path = Path(mask_path).resolve()
-    key = _cache_key(ct_path, mask_path, sample_step, target_faces_per_vertebra)
+    ct_shape = tuple(int(value) for value in np.asanyarray(ct.data).shape)
+    segmentation_shape = tuple(
+        int(value) for value in np.asanyarray(segmentation.labels).shape
+    )
+    report(10, "Validating prediction")
+    if ct_shape != segmentation_shape:
+        raise ValueError(
+            f"CT shape {ct_shape} does not match mask shape {segmentation_shape}"
+        )
+    if not np.allclose(ct.affine, segmentation.affine, atol=1e-3, rtol=1e-5):
+        raise ValueError("CT and segmentation do not use the same spatial coordinates")
+
+    key = _build_cache_key(
+        ct, segmentation, sample_step, target_faces_per_vertebra
+    )
     with _CACHE_LOCK:
         cached = _CASE_CACHE.get(key)
     if cached is not None:
         report(100, "Loaded cached 3D spine")
         return cached
 
-    report(4, "Reading image headers")
-    ct_image = nib.load(str(ct_path))
-    mask_image = nib.load(str(mask_path))
-    if ct_image.shape != mask_image.shape:
-        raise ValueError(
-            f"CT shape {ct_image.shape} does not match mask shape {mask_image.shape}"
-        )
-    if not np.allclose(ct_image.affine, mask_image.affine, atol=1e-3):
-        raise ValueError("CT and segmentation do not use the same spatial coordinates")
-
-    # Canonicalise the compact mask. The CT voxel array is deliberately never read.
-    report(10, "Reading segmentation mask")
+    # Canonicalise geometry only for display; no resampling or normalization occurs.
+    mask_image = nib.Nifti1Image(
+        _compact_mask(segmentation.labels), np.asarray(segmentation.affine)
+    )
     canonical_mask = nib.as_closest_canonical(mask_image)
     mask = _compact_mask(np.asanyarray(canonical_mask.dataobj))
     spacing = tuple(
@@ -278,9 +378,13 @@ def load_segmented_case(
 
     report(96, "Finalising 3D model")
     result = SegmentedCase(
-        ct_path=ct_path,
-        mask_path=mask_path,
-        name=ct_path.parent.name or ct_path.name,
+        ct_path=Path(ct.source_path).resolve(),
+        mask_path=(
+            Path(segmentation.source_path).resolve()
+            if segmentation.source_path is not None
+            else Path(ct.source_path).resolve()
+        ),
+        name=Path(ct.source_path).parent.name or Path(ct.source_path).name,
         shape=tuple(int(value) for value in canonical_mask.shape),
         spacing=spacing,
         orientation=orientation,
@@ -290,3 +394,23 @@ def load_segmented_case(
         _CASE_CACHE[key] = result
     report(100, "3D spine ready")
     return result
+
+
+def load_segmented_case(
+    ct_path: Path,
+    mask_path: Path,
+    *,
+    sample_step: int = 2,
+    target_faces_per_vertebra: int = 12_000,
+    progress: ProgressCallback | None = None,
+) -> SegmentedCase:
+    """Compatibility wrapper for a trusted CT and segmentation file pair."""
+    ct = load_ct_volume(ct_path, progress=progress)
+    segmentation = load_segmentation_volume(mask_path)
+    return build_segmented_case(
+        ct,
+        segmentation,
+        sample_step=sample_step,
+        target_faces_per_vertebra=target_faces_per_vertebra,
+        progress=progress,
+    )
