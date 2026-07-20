@@ -390,8 +390,10 @@ class LenxWindow(QMainWindow):
         if self._auto_rotation_paused:
             return
         viewport = self.plotter.interactor
-        cursor_position = viewport.mapFromGlobal(QCursor.pos())
-        if viewport.rect().contains(cursor_position):
+        hovered_widget = QApplication.widgetAt(QCursor.pos())
+        if hovered_widget is viewport or (
+            hovered_widget is not None and viewport.isAncestorOf(hovered_widget)
+        ):
             return
         self.plotter.camera.Azimuth(0.35)
         self.plotter.render()
@@ -410,7 +412,9 @@ class LenxWindow(QMainWindow):
         self.plotter.render()
 
     def _update_3d_scale(self) -> None:
-        if self.case is None:
+        if self.case is None or (
+            self._review_window is not None and self._review_window.isVisible()
+        ):
             self.scale_bar.hide()
             return
         viewport = self.plotter.interactor
@@ -766,16 +770,24 @@ class LenxWindow(QMainWindow):
         if self.case is None:
             return
         try:
+            self.scale_bar.hide()
             if self._review_window is not None:
                 self._review_window.showNormal()
                 self._review_window.raise_()
                 self._review_window.activateWindow()
                 return
             self._review_window = CTReviewDialog(self.case.ct_path, self)
+            self._review_window.finished.connect(self._on_review_closed)
             self._review_window.show()
             self._review_window.raise_()
         except Exception as error:
+            self._update_3d_scale()
             QMessageBox.critical(self, "Unable to review CT", str(error))
+
+    @Slot(int)
+    def _on_review_closed(self, _result: int) -> None:
+        self._review_window = None
+        self._update_3d_scale()
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt API
         self._rotation_timer.stop()
