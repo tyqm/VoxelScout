@@ -139,6 +139,22 @@ reuse the cached prediction.
 - Hover and click operate on existing VTK actors and never rescan the mask.
 - Loading and mesh generation run in a background QThread with progress updates.
 
+## Display-only CT review
+
+After a case loads, `Review CT` opens a separate axial before/after window. This
+tool reads the existing CT but never writes it and is not connected to the
+nnU-Net command, prediction cache, segmentation, or mesh inputs.
+
+The default review uses deterministic 0.5th/99.5th percentile automatic
+windowing after display-only clipping to `-1024…3071 HU`. The window follows the
+DICOM VOI concept and can be disabled for manual center/width values. Gamma,
+Sigmoid, and slice-wise CLAHE are separate optional transforms applied only
+after values have been mapped to `[0, 1]`; all are off by default. The panel also
+reports non-finite samples and values outside the configured HU clip range.
+
+- DICOM windowing definition: https://dicom.nema.org/medical/dicom/current/output/chtml/part03/sect_C.11.2.html
+- scikit-image exposure transforms: https://scikit-image.org/docs/stable/api/skimage.exposure.html
+
 Run the real-case benchmark with:
 
 ```powershell

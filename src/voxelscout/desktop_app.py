@@ -35,6 +35,7 @@ from voxelscout.desktop_data import (
     SegmentedCase,
 )
 from voxelscout.dicom_import import DicomSeries, convert_dicom_series, discover_ct_series
+from voxelscout.ct_review import CTReviewDialog
 from voxelscout.inference.backend import SegmentationBackend
 from voxelscout.inference.workflow import load_case_for_ct
 
@@ -117,6 +118,7 @@ class VoxelScoutWindow(QMainWindow):
         self._load_worker: CaseLoader | None = None
         self._auto_rotation_paused = False
         self._zoom_limits: tuple[float, float] | None = None
+        self._review_window: CTReviewDialog | None = None
 
         self.setWindowTitle("Lenx")
         self.setFixedSize(960, 680)
@@ -170,6 +172,12 @@ class VoxelScoutWindow(QMainWindow):
         self.export_button.setEnabled(False)
         self.export_button.clicked.connect(self.export_image)
         controls_layout.addWidget(self.export_button)
+
+        self.review_button = QPushButton("Review CT")
+        self.review_button.setFixedHeight(40)
+        self.review_button.setEnabled(False)
+        self.review_button.clicked.connect(self.review_ct)
+        controls_layout.addWidget(self.review_button)
 
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
@@ -381,6 +389,7 @@ class VoxelScoutWindow(QMainWindow):
         self.open_button.setEnabled(False)
         self.export_button.setEnabled(False)
         self.reset_button.setEnabled(False)
+        self.review_button.setEnabled(False)
         self.progress.setValue(0)
         self.progress.show()
         self.status_label.setText("Reading CT")
@@ -415,6 +424,7 @@ class VoxelScoutWindow(QMainWindow):
         self.open_button.setEnabled(True)
         self.export_button.setEnabled(True)
         self.reset_button.setEnabled(True)
+        self.review_button.setEnabled(True)
         self._populate_scene(case)
         self._set_selected(None)
 
@@ -425,6 +435,7 @@ class VoxelScoutWindow(QMainWindow):
         self.open_button.setEnabled(True)
         self.export_button.setEnabled(self.case is not None)
         self.reset_button.setEnabled(self.case is not None)
+        self.review_button.setEnabled(self.case is not None)
         QMessageBox.critical(self, "Unable to open case", message)
 
     @Slot()
@@ -592,6 +603,17 @@ class VoxelScoutWindow(QMainWindow):
             QMessageBox.critical(self, "Export failed", str(error))
         finally:
             self._auto_rotation_paused = False
+
+    @Slot()
+    def review_ct(self) -> None:
+        if self.case is None:
+            return
+        try:
+            self._review_window = CTReviewDialog(self.case.ct_path, self)
+            self._review_window.show()
+            self._review_window.raise_()
+        except Exception as error:
+            QMessageBox.critical(self, "Unable to review CT", str(error))
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt API
         self._rotation_timer.stop()
