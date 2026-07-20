@@ -3,7 +3,7 @@ requires = ["setuptools>=75"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "voxelscout"
+name = "lenx"
 version = "0.5.0"
 description = "A desktop educational tool for interactive 3D vertebra exploration"
 readme = "README.md"
@@ -28,6 +28,7 @@ research = [
 dev = ["pytest>=8,<10"]
 
 [project.scripts]
+lenx = "voxelscout.desktop_app:main"
 voxelscout-viewer = "voxelscout.desktop_app:main"
 voxelscout-inspect = "voxelscout.inspect_case:main"
 voxelscout-inventory = "voxelscout.build_inventory:main"

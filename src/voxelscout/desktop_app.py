@@ -101,7 +101,7 @@ class PillFrame(QFrame):
         painter.drawRoundedRect(QRectF(self.rect()), 21.0, 21.0)
 
 
-class VoxelScoutWindow(QMainWindow):
+class LenxWindow(QMainWindow):
     """One-window 3D vertebra explorer for education and communication."""
 
     def __init__(self, backend: SegmentationBackend | None = None) -> None:
@@ -118,9 +118,10 @@ class VoxelScoutWindow(QMainWindow):
         self._load_worker: CaseLoader | None = None
         self._auto_rotation_paused = False
         self._zoom_limits: tuple[float, float] | None = None
+        self._pan_limits: tuple[np.ndarray, np.ndarray] | None = None
         self._review_window: CTReviewDialog | None = None
 
-        self.setWindowTitle("VoxelScout — Lenx")
+        self.setWindowTitle("Lenx")
         self.setFixedSize(960, 680)
         self._build_ui()
         self._configure_plotter()
@@ -291,6 +292,7 @@ class VoxelScoutWindow(QMainWindow):
         self._picker.SetTolerance(0.0008)
         self._vtk_interactor().AddObserver("MouseMoveEvent", self._on_mouse_move)
         self._vtk_interactor().AddObserver("LeftButtonPressEvent", self._on_left_click)
+        self._vtk_interactor().AddObserver("InteractionEvent", self._on_interaction)
         self._rotation_timer = QTimer(self)
         self._rotation_timer.setInterval(50)
         self._rotation_timer.timeout.connect(self._auto_rotate)
@@ -314,6 +316,7 @@ class VoxelScoutWindow(QMainWindow):
         ):
             return
         self._clamp_zoom()
+        self._clamp_pan()
         if self._auto_rotation_paused:
             return
         viewport = self.plotter.interactor
@@ -340,6 +343,26 @@ class VoxelScoutWindow(QMainWindow):
         camera.SetPosition(*(focal_point + offset * (clamped / distance)))
         self.plotter.reset_camera_clipping_range()
         self.plotter.render()
+
+    def _clamp_pan(self) -> None:
+        if self._pan_limits is None:
+            return
+        camera = self.plotter.camera
+        focal_point = np.asarray(camera.GetFocalPoint(), dtype=float)
+        lower, upper = self._pan_limits
+        clamped = np.clip(focal_point, lower, upper)
+        if np.allclose(focal_point, clamped):
+            return
+        position = np.asarray(camera.GetPosition(), dtype=float)
+        shift = clamped - focal_point
+        camera.SetFocalPoint(*clamped)
+        camera.SetPosition(*(position + shift))
+        self.plotter.reset_camera_clipping_range()
+
+    def _on_interaction(self, _caller: object, _event: str) -> None:
+        """Keep camera zoom and pan within useful model-relative bounds."""
+        self._clamp_zoom()
+        self._clamp_pan()
 
     @Slot()
     def open_case(self) -> None:
@@ -433,6 +456,9 @@ class VoxelScoutWindow(QMainWindow):
 
     @Slot(object)
     def _on_case_loaded(self, case: SegmentedCase) -> None:
+        if self._review_window is not None:
+            self._review_window.close()
+            self._review_window = None
         self.case = case
         self.progress.hide()
         self.status_label.hide()
@@ -556,9 +582,6 @@ class VoxelScoutWindow(QMainWindow):
         self._position_info_pill()
         self.info_pill.show()
         self.info_pill.raise_()
-        self.info_title.setText("Location")
-        self.info_primary.setText(info.plain_location)
-        self.info_secondary.setText(info.explanation)
 
     def _show_case_summary(self) -> None:
         if self.case is None:
@@ -624,6 +647,10 @@ class VoxelScoutWindow(QMainWindow):
         self.plotter.reset_camera()
         default_distance = float(self.plotter.camera.GetDistance())
         self._zoom_limits = (default_distance * 0.8, default_distance * 1.8)
+        bounds = np.asarray(self.plotter.bounds, dtype=float).reshape(3, 2)
+        centre = bounds.mean(axis=1)
+        allowance = np.maximum(bounds[:, 1] - bounds[:, 0], 1.0) * 0.35
+        self._pan_limits = (centre - allowance, centre + allowance)
         self.plotter.render()
 
     @Slot()
@@ -652,6 +679,11 @@ class VoxelScoutWindow(QMainWindow):
         if self.case is None:
             return
         try:
+            if self._review_window is not None:
+                self._review_window.showNormal()
+                self._review_window.raise_()
+                self._review_window.activateWindow()
+                return
             self._review_window = CTReviewDialog(self.case.ct_path, self)
             self._review_window.show()
             self._review_window.raise_()
@@ -670,7 +702,7 @@ class VoxelScoutWindow(QMainWindow):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="VoxelScout desktop 3D spine viewer")
+    parser = argparse.ArgumentParser(description="Lenx desktop 3D spine viewer")
     parser.add_argument("--ct", type=Path, help="NIfTI CT volume or DICOM folder")
     parser.add_argument("--mask", type=Path, help="Matching labelled segmentation")
     args, qt_args = parser.parse_known_args()
@@ -678,9 +710,9 @@ def main() -> None:
         parser.error("--mask requires --ct")
 
     app = QApplication.instance() or QApplication([sys.argv[0], *qt_args])
-    app.setApplicationName("VoxelScout")
+    app.setApplicationName("Lenx")
     app.setStyle("Fusion")
-    window = VoxelScoutWindow()
+    window = LenxWindow()
     window.show()
     if args.ct is not None:
         def start_requested_case() -> None:

@@ -1,20 +1,21 @@
-# VoxelScout
+# Lenx
 
-VoxelScout is a desktop educational tool that converts segmented spinal CT data
+Lenx is a desktop educational tool that converts segmented spinal CT data
 into an interactive 3D model, allowing non-specialist users to identify and
 understand visible vertebrae through direct exploration.
 
 Current workflow: `(standalone NIfTI CT or DICOM CT folder) → pretrained nnU-Net → labelled 3D spine`.
 
-VoxelScout is the product and project name. `Lenx` is the short name retained for
-its Windows desktop window; the title bar shows `VoxelScout — Lenx` to make that
-relationship explicit. The current MVP version is 0.5.0.
+Lenx is the product, project, and Windows application name. The current MVP
+version is 0.5.0. The internal `voxelscout` Python namespace and legacy
+`VOXELSCOUT_*` environment variables remain available for compatibility with
+existing model installations and caches.
 
 ## Desktop application
 
 The Windows application deliberately focuses on one workflow:
 
-1. Open a NIfTI CT or DICOM CT folder. VoxelScout uses a trusted companion mask
+1. Open a NIfTI CT or DICOM CT folder. Lenx uses a trusted companion mask
    when present and otherwise runs the configured nnU-Net backend.
 2. Wait while one simplified mesh is generated and cached for each vertebra.
 3. Rotate, zoom, and pan the coloured 3D spine.
@@ -28,7 +29,7 @@ The Windows application deliberately focuses on one workflow:
 conda activate voxelscout
 pip install -r requirements.txt
 pip install -e .
-voxelscout-viewer
+lenx
 ```
 
 You can also launch it directly:
@@ -55,14 +56,14 @@ For a DICOM CT folder, use the `Open CT` menu and choose `DICOM folder`, or run:
 python app.py --ct "D:\scans\dicom-series"
 ```
 
-VoxelScout uses SimpleITK/GDCM to discover and order CT series. Localizers and
+Lenx uses SimpleITK/GDCM to discover and order CT series. Localizers and
 very short scout series are excluded when a diagnostic series is available. If
 more than one candidate remains, the desktop app shows one compact chooser with
 description, shape, and spacing. Slice dimensions, in-plane spacing, direction,
 position, and inter-slice spacing are validated before conversion.
 
 GDCM applies the DICOM rescale slope/intercept while reading, preserving CT HU.
-VoxelScout writes a float32 NIfTI containing pixels and geometry only; it never
+Lenx writes a float32 NIfTI containing pixels and geometry only; it never
 modifies the source DICOM or copies patient metadata into the cache. Converted
 volumes are stored outside the repository under the local application-data cache
 (override with `VOXELSCOUT_DICOM_CACHE_DIR`) and reuse the existing prediction
@@ -78,10 +79,10 @@ used before automatic inference.
 
 CT-only mode uses an external nnU-Net v2 command in the background. nnU-Net,
 PyTorch, and model weights are intentionally not mandatory viewer dependencies.
-VoxelScout automatically detects the adjacent development checkout used for the
+Lenx automatically detects the adjacent development checkout used for the
 verified local model (`VoxelScout-ML`) and its `verse-pretrained` Conda
 environment. For another installation, configure the direct model folder and
-the matching executable before starting VoxelScout:
+the matching executable before starting Lenx:
 
 ```powershell
 $env:VOXELSCOUT_NNUNET_MODEL_DIR = `
@@ -108,10 +109,10 @@ nnUNetTrainer__nnUNetResEncUNetMPlans__3d_lowres/
 ```
 
 If the command, model directory, or checkpoint is unavailable, loading stops
-with a specific error; VoxelScout never fabricates a mask or downloads a model.
+with a specific error; Lenx never fabricates a mask or downloads a model.
 Predictions are cached by CT modification state and backend/model configuration,
 so changing the CT or configuration does not reuse a stale result. Prediction
-label `26` is converted back to VerSe/VoxelScout label `28` before mesh creation.
+label `26` is converted back to VerSe/Lenx label `28` before mesh creation.
 
 The loading status identifies the selected source as `companion mask`, `cached
 prediction`, or `real model inference`; this does not add configuration controls
@@ -134,7 +135,7 @@ reuse the cached prediction.
 - DICOM is read and converted with SimpleITK/GDCM; no custom slice sorting is
   used.
 - CT and segmentation geometry are validated before mesh construction; the CT
-  is not resampled or normalized by VoxelScout.
+  is not resampled or normalized by Lenx.
 - The compact integer segmentation is released after mesh construction.
 - Marching Cubes runs separately on each vertebra's tight bounding box with a
   reduced sampling step.
@@ -197,7 +198,7 @@ and patient data are excluded from Git.
 
 ## Prepare VerSe 2020 for nnU-Net v2
 
-VoxelScout includes a deterministic dataset preparation command. It copies CT
+Lenx includes a deterministic dataset preparation command. It copies CT
 files without reorientation, resampling, normalization, or recompression. It
 preserves vertebra identities and only remaps official VerSe label `28` (T13) to
 consecutive training label `26`. The official validation cases remain outside
@@ -207,7 +208,7 @@ Install the project itself; nnU-Net, MONAI, and PyTorch are not required for thi
 step:
 
 ```powershell
-Set-Location "C:\path\to\VoxelScout"
+Set-Location "C:\path\to\Lenx"
 python -m pip install -e .
 ```
 
@@ -251,7 +252,7 @@ D:\nnUNet\verse20_holdout\
 ```
 
 `label_mapping.json` contains both VerSe-to-training and
-training-to-VerSe mappings, including prediction label `26` back to VoxelScout
+training-to-VerSe mappings, including prediction label `26` back to Lenx
 label `28`. Existing compatible files are reused. Incompatible CTs, labels, or
 metadata are never silently overwritten. This command prepares data only; it
 does not run nnU-Net planning, preprocessing, or training.

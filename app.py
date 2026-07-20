@@ -1,4 +1,4 @@
-"""Launch the VoxelScout Windows desktop application."""
+"""Launch the Lenx Windows desktop application."""
 
 from voxelscout.desktop_app import main
 

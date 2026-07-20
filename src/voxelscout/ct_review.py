@@ -34,8 +34,7 @@ class CTReviewDialog(QDialog):
 
     def __init__(self, ct_path: Path, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Review CT")
-        self.resize(900, 620)
+        self.setWindowTitle("Lenx — Review CT")
         image = nib.as_closest_canonical(nib.load(str(Path(ct_path).resolve())))
         if len(image.shape) != 3:
             raise ValueError(f"Expected a 3D CT volume, got shape {image.shape}")
@@ -43,6 +42,7 @@ class CTReviewDialog(QDialog):
         self._report = inspect_hu(self._volume)
         center, width = automatic_window(self._volume)
         self._build_ui(center, width)
+        self.setFixedSize(self.minimumSizeHint())
         self._update_controls()
         self._render()
 
