@@ -4,14 +4,18 @@ VoxelScout is a desktop educational tool that converts segmented spinal CT data
 into an interactive 3D model, allowing non-specialist users to identify and
 understand visible vertebrae through direct exploration.
 
-Current CT-only workflow: `standalone NIfTI CT → pretrained nnU-Net → labelled 3D spine`.
+Current workflow: `(standalone NIfTI CT or DICOM CT folder) → pretrained nnU-Net → labelled 3D spine`.
+
+VoxelScout is the product and project name. `Lenx` is the short name retained for
+its Windows desktop window; the title bar shows `VoxelScout — Lenx` to make that
+relationship explicit. The current MVP version is 0.5.0.
 
 ## Desktop application
 
 The Windows application deliberately focuses on one workflow:
 
-1. Open a NIfTI CT. VoxelScout uses a trusted companion mask when present and
-   otherwise runs the configured nnU-Net backend.
+1. Open a NIfTI CT or DICOM CT folder. VoxelScout uses a trusted companion mask
+   when present and otherwise runs the configured nnU-Net backend.
 2. Wait while one simplified mesh is generated and cached for each vertebra.
 3. Rotate, zoom, and pan the coloured 3D spine.
 4. Hover to see the vertebra code, anatomical name, and spinal region.
@@ -169,8 +173,8 @@ machine; the benchmark prints the local measurements.
 ## Current limitation
 
 Automatic segmentation requires a separately installed and configured
-pretrained nnU-Net model. DICOM input and diagnostic or abnormality detection
-are not supported.
+pretrained nnU-Net model. NIfTI and DICOM CT input are supported; diagnostic or
+abnormality detection is not supported.
 
 The application does not diagnose fractures, tumours, or other abnormalities and
 does not replace interpretation by a qualified healthcare professional.

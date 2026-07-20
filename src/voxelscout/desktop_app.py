@@ -120,7 +120,7 @@ class VoxelScoutWindow(QMainWindow):
         self._zoom_limits: tuple[float, float] | None = None
         self._review_window: CTReviewDialog | None = None
 
-        self.setWindowTitle("Lenx")
+        self.setWindowTitle("VoxelScout — Lenx")
         self.setFixedSize(960, 680)
         self._build_ui()
         self._configure_plotter()
@@ -197,6 +197,18 @@ class VoxelScoutWindow(QMainWindow):
         info_layout = QVBoxLayout(info_panel)
         info_layout.setContentsMargins(18, 18, 18, 18)
         info_layout.setSpacing(8)
+        self.info_title = QLabel("")
+        self.info_title.setObjectName("infoTitle")
+        self.info_title.setWordWrap(True)
+        info_layout.addWidget(self.info_title)
+        self.info_primary = QLabel("")
+        self.info_primary.setObjectName("infoPrimary")
+        self.info_primary.setWordWrap(True)
+        info_layout.addWidget(self.info_primary)
+        self.info_secondary = QLabel("")
+        self.info_secondary.setObjectName("infoSecondary")
+        self.info_secondary.setWordWrap(True)
+        info_layout.addWidget(self.info_secondary)
         info_layout.addStretch(1)
         sidebar_layout.addWidget(info_panel, 1)
         content_layout.addWidget(sidebar)
@@ -267,6 +279,9 @@ class VoxelScoutWindow(QMainWindow):
         QLabel#pillName {{ color: #3e4552; font-size: 13px; font-weight: 600; }}
         QLabel#pillRegion {{ color: #747d8c; font-size: 12px; font-weight: 500; }}
         QLabel#statusLabel {{ color: {MUTED}; font-size: 11px; }}
+        QLabel#infoTitle {{ color: {TEXT}; font-size: 14px; font-weight: 700; }}
+        QLabel#infoPrimary {{ color: #c6d3df; font-size: 12px; }}
+        QLabel#infoSecondary {{ color: {MUTED}; font-size: 11px; }}
         """
 
     def _configure_plotter(self) -> None:
@@ -541,6 +556,32 @@ class VoxelScoutWindow(QMainWindow):
         self._position_info_pill()
         self.info_pill.show()
         self.info_pill.raise_()
+        self.info_title.setText("Location")
+        self.info_primary.setText(info.plain_location)
+        self.info_secondary.setText(info.explanation)
+
+    def _show_case_summary(self) -> None:
+        if self.case is None:
+            self.info_title.clear()
+            self.info_primary.clear()
+            self.info_secondary.clear()
+            return
+        labels = self.case.labels
+        if labels:
+            first = vertebra_info(labels[0]).code
+            last = vertebra_info(labels[-1]).code
+            label_range = first if first == last else f"{first}–{last}"
+        else:
+            label_range = "None"
+        shape = " × ".join(str(value) for value in self.case.shape)
+        spacing = " × ".join(f"{value:g}" for value in self.case.spacing)
+        self.info_title.setText("Case")
+        self.info_primary.setText(
+            f"{shape}\n{spacing} mm\n{self.case.orientation}"
+        )
+        self.info_secondary.setText(
+            f"{len(labels)} vertebrae\nLabels {label_range}"
+        )
 
     def _position_info_pill(self) -> None:
         viewport = self.plotter.interactor
@@ -557,6 +598,7 @@ class VoxelScoutWindow(QMainWindow):
             self._display_info(label, temporary=False)
             return
         self.info_pill.hide()
+        self._show_case_summary()
 
     def _clear_selection(self) -> None:
         affected = {self.selected_label, self.hovered_label}
@@ -566,6 +608,7 @@ class VoxelScoutWindow(QMainWindow):
             if label is not None:
                 self._refresh_actor(label)
         self.info_pill.hide()
+        self._show_case_summary()
 
     def moveEvent(self, event: object) -> None:  # noqa: N802 - Qt API
         super().moveEvent(event)
