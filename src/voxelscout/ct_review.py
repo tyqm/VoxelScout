@@ -6,8 +6,8 @@ from pathlib import Path
 
 import nibabel as nib
 import numpy as np
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -27,6 +27,82 @@ from voxelscout.ct_display import (
     inspect_hu,
     render_ct_slice,
 )
+from voxelscout.spatial_guides import (
+    axial_edge_labels,
+    format_scale_length,
+    nice_scale_length,
+)
+
+
+class CTImageView(QLabel):
+    """CT image label with orientation and physical-scale overlays."""
+
+    def __init__(
+        self,
+        orientation: tuple[str, str, str],
+        spacing: tuple[float, float, float],
+    ) -> None:
+        super().__init__()
+        self._edges = axial_edge_labels(orientation)
+        self._spacing = spacing
+        self._source_width = 1
+        self.setMinimumSize(320, 320)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setStyleSheet("background: black;")
+
+    def set_ct_image(self, image: QImage, source_width: int) -> None:
+        self._source_width = source_width
+        self.setPixmap(
+            QPixmap.fromImage(image).scaled(
+                self.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+
+    def paintEvent(self, event: object) -> None:  # noqa: N802 - Qt API
+        super().paintEvent(event)
+        pixmap = self.pixmap()
+        if pixmap is None or pixmap.isNull():
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(
+            (self.width() - pixmap.width()) / 2,
+            (self.height() - pixmap.height()) / 2,
+            pixmap.width(),
+            pixmap.height(),
+        )
+        self._draw_text(painter, rect.left() + 10, rect.top() + 19, "Axial")
+        self._draw_text(painter, rect.left() + 10, rect.center().y(), self._edges["left"])
+        self._draw_text(painter, rect.right() - 17, rect.center().y(), self._edges["right"])
+        self._draw_text(painter, rect.center().x() - 4, rect.top() + 19, self._edges["top"])
+        self._draw_text(painter, rect.center().x() - 4, rect.bottom() - 8, self._edges["bottom"])
+
+        screen_pixels_per_voxel = pixmap.width() / max(self._source_width, 1)
+        mm_per_pixel = self._spacing[0] / screen_pixels_per_voxel
+        length, pixels = nice_scale_length(mm_per_pixel, min(120.0, rect.width() * 0.35))
+        right = rect.right() - 12
+        baseline = rect.bottom() - 15
+        left = right - pixels
+        pen = QPen(QColor(242, 246, 250, 225), 2)
+        painter.setPen(pen)
+        painter.drawLine(QPointF(left, baseline), QPointF(right, baseline))
+        painter.drawLine(QPointF(left, baseline - 4), QPointF(left, baseline + 4))
+        painter.drawLine(QPointF(right, baseline - 4), QPointF(right, baseline + 4))
+        self._draw_text(
+            painter,
+            right - 42,
+            baseline - 7,
+            format_scale_length(length),
+        )
+
+    @staticmethod
+    def _draw_text(painter: QPainter, x: float, y: float, text: str) -> None:
+        painter.setPen(QColor(0, 0, 0, 190))
+        painter.drawText(QPointF(x + 1, y + 1), text)
+        painter.setPen(QColor(242, 246, 250, 235))
+        painter.drawText(QPointF(x, y), text)
 
 
 class CTReviewDialog(QDialog):
@@ -39,6 +115,8 @@ class CTReviewDialog(QDialog):
         if len(image.shape) != 3:
             raise ValueError(f"Expected a 3D CT volume, got shape {image.shape}")
         self._volume = np.asanyarray(image.dataobj)
+        self._orientation = tuple(str(code) for code in nib.aff2axcodes(image.affine))
+        self._spacing = tuple(float(value) for value in image.header.get_zooms()[:3])
         self._report = inspect_hu(self._volume)
         center, width = automatic_window(self._volume)
         self._build_ui(center, width)
@@ -59,7 +137,11 @@ class CTReviewDialog(QDialog):
         self.slice_slider.setRange(0, self._volume.shape[2] - 1)
         self.slice_slider.setValue(self._volume.shape[2] // 2)
         self.slice_slider.valueChanged.connect(self._render)
-        layout.addWidget(self.slice_slider)
+        slice_row = QHBoxLayout()
+        slice_row.addWidget(self.slice_slider, 1)
+        self.slice_position = QLabel()
+        slice_row.addWidget(self.slice_position)
+        layout.addLayout(slice_row)
 
         controls = QHBoxLayout()
         window_form = QFormLayout()
@@ -113,16 +195,12 @@ class CTReviewDialog(QDialog):
         ):
             widget.valueChanged.connect(self._render)
 
-    @staticmethod
-    def _image_panel(title: str) -> tuple[QWidget, QLabel]:
+    def _image_panel(self, title: str) -> tuple[QWidget, CTImageView]:
         panel = QWidget()
         layout = QVBoxLayout(panel)
         heading = QLabel(title)
         heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        view = QLabel()
-        view.setMinimumSize(320, 320)
-        view.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        view.setStyleSheet("background: black;")
+        view = CTImageView(self._orientation, self._spacing)
         layout.addWidget(heading)
         layout.addWidget(view, 1)
         return panel, view
@@ -167,6 +245,7 @@ class CTReviewDialog(QDialog):
         if not hasattr(self, "before"):
             return
         index = self.slice_slider.value()
+        self.slice_position.setText(f"Slice {index + 1} / {self._volume.shape[2]}")
         axial = self._volume[:, :, index]
         settings = self._settings()
         before = render_ct_slice(axial, settings.before_settings())
@@ -175,7 +254,7 @@ class CTReviewDialog(QDialog):
         self._set_image(self.after[1], after)
 
     @staticmethod
-    def _set_image(label: QLabel, pixels: np.ndarray) -> None:
+    def _set_image(label: CTImageView, pixels: np.ndarray) -> None:
         display = np.ascontiguousarray(np.flipud(pixels.T))
         image = QImage(
             display.data,
@@ -184,13 +263,7 @@ class CTReviewDialog(QDialog):
             display.strides[0],
             QImage.Format.Format_Grayscale8,
         ).copy()
-        label.setPixmap(
-            QPixmap.fromImage(image).scaled(
-                label.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-        )
+        label.set_ct_image(image, pixels.shape[0])
 
     def resizeEvent(self, event: object) -> None:  # noqa: N802 - Qt API
         super().resizeEvent(event)

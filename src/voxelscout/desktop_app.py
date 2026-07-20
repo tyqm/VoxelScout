@@ -9,8 +9,8 @@ from pathlib import Path
 
 import numpy as np
 import pyvista as pv
-from PySide6.QtCore import QObject, QPoint, QRectF, Qt, QThread, QTimer, Signal, Slot
-from PySide6.QtGui import QColor, QCloseEvent, QCursor, QPainter, QPaintEvent
+from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtGui import QColor, QCloseEvent, QCursor, QPainter, QPaintEvent, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -38,6 +38,7 @@ from voxelscout.dicom_import import DicomSeries, convert_dicom_series, discover_
 from voxelscout.ct_review import CTReviewDialog
 from voxelscout.inference.backend import SegmentationBackend
 from voxelscout.inference.workflow import load_case_for_ct
+from voxelscout.spatial_guides import format_scale_length, nice_scale_length
 
 
 BACKGROUND = "#f9fafc"
@@ -99,6 +100,46 @@ class PillFrame(QFrame):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor("#e7e8ee"))
         painter.drawRoundedRect(QRectF(self.rect()), 21.0, 21.0)
+
+
+class ScaleBarOverlay(QWidget):
+    """Transparent physical scale drawn over the 3D viewport."""
+
+    def __init__(
+        self,
+        parent: QWidget,
+        flags: Qt.WindowType = Qt.WindowType.Widget,
+    ) -> None:
+        super().__init__(parent, flags)
+        self._length_mm = 0.0
+        self._pixels = 0.0
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setFixedSize(150, 44)
+
+    def set_scale(self, length_mm: float, pixels: float) -> None:
+        if np.isclose(self._length_mm, length_mm) and np.isclose(self._pixels, pixels):
+            return
+        self._length_mm = length_mm
+        self._pixels = pixels
+        self.update()
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 - Qt API
+        if self._length_mm <= 0 or self._pixels <= 0:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor(238, 244, 249, 225), 2))
+        right = self.width() - 8.0
+        left = right - min(self._pixels, self.width() - 18.0)
+        baseline = self.height() - 9.0
+        painter.drawLine(QPointF(left, baseline), QPointF(right, baseline))
+        painter.drawLine(QPointF(left, baseline - 4), QPointF(left, baseline + 4))
+        painter.drawLine(QPointF(right, baseline - 4), QPointF(right, baseline + 4))
+        text = format_scale_length(self._length_mm)
+        painter.setPen(QColor(238, 244, 249, 235))
+        painter.drawText(QPointF(right - 48, baseline - 8), text)
 
 
 class LenxWindow(QMainWindow):
@@ -198,18 +239,6 @@ class LenxWindow(QMainWindow):
         info_layout = QVBoxLayout(info_panel)
         info_layout.setContentsMargins(18, 18, 18, 18)
         info_layout.setSpacing(8)
-        self.info_title = QLabel("")
-        self.info_title.setObjectName("infoTitle")
-        self.info_title.setWordWrap(True)
-        info_layout.addWidget(self.info_title)
-        self.info_primary = QLabel("")
-        self.info_primary.setObjectName("infoPrimary")
-        self.info_primary.setWordWrap(True)
-        info_layout.addWidget(self.info_primary)
-        self.info_secondary = QLabel("")
-        self.info_secondary.setObjectName("infoSecondary")
-        self.info_secondary.setWordWrap(True)
-        info_layout.addWidget(self.info_secondary)
         info_layout.addStretch(1)
         sidebar_layout.addWidget(info_panel, 1)
         content_layout.addWidget(sidebar)
@@ -223,6 +252,13 @@ class LenxWindow(QMainWindow):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
         viewer_layout.addWidget(self.plotter.interactor)
+        self.scale_bar = ScaleBarOverlay(
+            self,
+            Qt.WindowType.Tool
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowDoesNotAcceptFocus,
+        )
+        self.scale_bar.hide()
 
         self.info_pill = PillFrame(
             self,
@@ -280,9 +316,6 @@ class LenxWindow(QMainWindow):
         QLabel#pillName {{ color: #3e4552; font-size: 13px; font-weight: 600; }}
         QLabel#pillRegion {{ color: #747d8c; font-size: 12px; font-weight: 500; }}
         QLabel#statusLabel {{ color: {MUTED}; font-size: 11px; }}
-        QLabel#infoTitle {{ color: {TEXT}; font-size: 14px; font-weight: 700; }}
-        QLabel#infoPrimary {{ color: #c6d3df; font-size: 12px; }}
-        QLabel#infoSecondary {{ color: {MUTED}; font-size: 11px; }}
         """
 
     def _configure_plotter(self) -> None:
@@ -305,6 +338,7 @@ class LenxWindow(QMainWindow):
     def _show_empty_scene(self) -> None:
         self.plotter.clear()
         self.plotter.set_background("#050a10")
+        self.scale_bar.hide()
         self.plotter.render()
 
     @Slot()
@@ -317,6 +351,7 @@ class LenxWindow(QMainWindow):
             return
         self._clamp_zoom()
         self._clamp_pan()
+        self._update_3d_scale()
         if self._auto_rotation_paused:
             return
         viewport = self.plotter.interactor
@@ -330,19 +365,32 @@ class LenxWindow(QMainWindow):
         if self._zoom_limits is None:
             return
         camera = self.plotter.camera
-        focal_point = np.asarray(camera.GetFocalPoint(), dtype=float)
-        position = np.asarray(camera.GetPosition(), dtype=float)
-        offset = position - focal_point
-        distance = float(np.linalg.norm(offset))
-        if distance <= 0.0:
-            return
+        scale = float(camera.GetParallelScale())
         minimum, maximum = self._zoom_limits
-        clamped = min(max(distance, minimum), maximum)
-        if np.isclose(distance, clamped):
+        clamped = min(max(scale, minimum), maximum)
+        if np.isclose(scale, clamped):
             return
-        camera.SetPosition(*(focal_point + offset * (clamped / distance)))
+        camera.SetParallelScale(clamped)
         self.plotter.reset_camera_clipping_range()
         self.plotter.render()
+
+    def _update_3d_scale(self) -> None:
+        if self.case is None:
+            self.scale_bar.hide()
+            return
+        viewport = self.plotter.interactor
+        height = max(viewport.height(), 1)
+        # Parallel projection gives one unambiguous world-mm scale across the view.
+        mm_per_pixel = 2.0 * float(self.plotter.camera.GetParallelScale()) / height
+        length, pixels = nice_scale_length(mm_per_pixel, 125.0)
+        self.scale_bar.set_scale(length, pixels)
+        origin = viewport.mapToGlobal(QPoint(0, 0))
+        self.scale_bar.move(
+            origin.x() + max(8, viewport.width() - self.scale_bar.width() - 10),
+            origin.y() + max(8, viewport.height() - self.scale_bar.height() - 10),
+        )
+        self.scale_bar.show()
+        self.scale_bar.raise_()
 
     def _clamp_pan(self) -> None:
         if self._pan_limits is None:
@@ -363,6 +411,7 @@ class LenxWindow(QMainWindow):
         """Keep camera zoom and pan within useful model-relative bounds."""
         self._clamp_zoom()
         self._clamp_pan()
+        self._update_3d_scale()
 
     @Slot()
     def open_case(self) -> None:
@@ -511,7 +560,13 @@ class LenxWindow(QMainWindow):
             self.label_actors[item.label] = actor
             self.base_colours[item.label] = item.colour
 
-        self.plotter.add_axes(line_width=2, color="#91a4b7")
+        self.plotter.add_axes(
+            line_width=2,
+            color="#91a4b7",
+            xlabel="R",
+            ylabel="A",
+            zlabel="S",
+        )
         self.reset_camera()
 
     @staticmethod
@@ -584,27 +639,7 @@ class LenxWindow(QMainWindow):
         self.info_pill.raise_()
 
     def _show_case_summary(self) -> None:
-        if self.case is None:
-            self.info_title.clear()
-            self.info_primary.clear()
-            self.info_secondary.clear()
-            return
-        labels = self.case.labels
-        if labels:
-            first = vertebra_info(labels[0]).code
-            last = vertebra_info(labels[-1]).code
-            label_range = first if first == last else f"{first}–{last}"
-        else:
-            label_range = "None"
-        shape = " × ".join(str(value) for value in self.case.shape)
-        spacing = " × ".join(f"{value:g}" for value in self.case.spacing)
-        self.info_title.setText("Case")
-        self.info_primary.setText(
-            f"{shape}\n{spacing} mm\n{self.case.orientation}"
-        )
-        self.info_secondary.setText(
-            f"{len(labels)} vertebrae\nLabels {label_range}"
-        )
+        """The reserved lower-left panel intentionally stays empty."""
 
     def _position_info_pill(self) -> None:
         viewport = self.plotter.interactor
@@ -637,6 +672,8 @@ class LenxWindow(QMainWindow):
         super().moveEvent(event)
         if hasattr(self, "info_pill") and self.info_pill.isVisible():
             QTimer.singleShot(0, self._position_info_pill)
+        if hasattr(self, "scale_bar") and self.scale_bar.isVisible():
+            QTimer.singleShot(0, self._update_3d_scale)
 
     @Slot()
     def reset_camera(self) -> None:
@@ -644,13 +681,15 @@ class LenxWindow(QMainWindow):
             return
         self._clear_selection()
         self.plotter.view_isometric()
+        self.plotter.camera.SetParallelProjection(True)
         self.plotter.reset_camera()
-        default_distance = float(self.plotter.camera.GetDistance())
-        self._zoom_limits = (default_distance * 0.8, default_distance * 1.8)
+        default_scale = float(self.plotter.camera.GetParallelScale())
+        self._zoom_limits = (default_scale * 0.55, default_scale * 1.8)
         bounds = np.asarray(self.plotter.bounds, dtype=float).reshape(3, 2)
         centre = bounds.mean(axis=1)
         allowance = np.maximum(bounds[:, 1] - bounds[:, 0], 1.0) * 0.35
         self._pan_limits = (centre - allowance, centre + allowance)
+        self._update_3d_scale()
         self.plotter.render()
 
     @Slot()
@@ -693,6 +732,7 @@ class LenxWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt API
         self._rotation_timer.stop()
         self.info_pill.hide()
+        self.scale_bar.hide()
         if self._load_thread is not None and self._load_thread.isRunning():
             self._load_thread.requestInterruption()
             self._load_thread.quit()
