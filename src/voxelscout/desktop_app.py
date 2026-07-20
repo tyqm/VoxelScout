@@ -13,8 +13,10 @@ from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, Qt, QThread, QTimer
 from PySide6.QtGui import QColor, QCloseEvent, QCursor, QPainter, QPaintEvent, QPen
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QFileDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -31,6 +33,7 @@ from pyvistaqt import QtInteractor
 from vtkmodules.vtkRenderingCore import vtkCellPicker
 
 from voxelscout.anatomy import vertebra_info
+from voxelscout.appearance import AppearanceMode, colour_for_label
 from voxelscout.desktop_data import (
     SegmentedCase,
 )
@@ -148,6 +151,7 @@ class LenxWindow(QMainWindow):
     def __init__(self, backend: SegmentationBackend | None = None) -> None:
         super().__init__()
         self._backend = backend
+        self.appearance_mode = AppearanceMode.REGIONS
         self.case: SegmentedCase | None = None
         self.actor_labels: dict[str, int] = {}
         self.label_actors: dict[int, object] = {}
@@ -239,6 +243,31 @@ class LenxWindow(QMainWindow):
         info_layout = QVBoxLayout(info_panel)
         info_layout.setContentsMargins(18, 18, 18, 18)
         info_layout.setSpacing(8)
+        appearance_title = QLabel("Appearance")
+        appearance_title.setObjectName("appearanceTitle")
+        info_layout.addWidget(appearance_title)
+        appearance_grid = QGridLayout()
+        appearance_grid.setContentsMargins(0, 2, 0, 0)
+        appearance_grid.setSpacing(8)
+        self.appearance_group = QButtonGroup(self)
+        self.appearance_group.setExclusive(True)
+        appearance_modes = (
+            (AppearanceMode.NATURAL, 0, 0, 1, 1),
+            (AppearanceMode.REGIONS, 0, 1, 1, 1),
+            (AppearanceMode.LABELS, 1, 0, 1, 2),
+        )
+        for identifier, (mode, row, column, row_span, column_span) in enumerate(
+            appearance_modes
+        ):
+            button = QPushButton(mode.value)
+            button.setObjectName("appearanceButton")
+            button.setCheckable(True)
+            button.setFixedHeight(46)
+            button.setChecked(mode is self.appearance_mode)
+            self.appearance_group.addButton(button, identifier)
+            appearance_grid.addWidget(button, row, column, row_span, column_span)
+        self.appearance_group.idClicked.connect(self._set_appearance_mode)
+        info_layout.addLayout(appearance_grid)
         info_layout.addStretch(1)
         sidebar_layout.addWidget(info_panel, 1)
         content_layout.addWidget(sidebar)
@@ -316,6 +345,12 @@ class LenxWindow(QMainWindow):
         QLabel#pillName {{ color: #3e4552; font-size: 13px; font-weight: 600; }}
         QLabel#pillRegion {{ color: #747d8c; font-size: 12px; font-weight: 500; }}
         QLabel#statusLabel {{ color: {MUTED}; font-size: 11px; }}
+        QLabel#appearanceTitle {{ color: {MUTED}; font-size: 12px; font-weight: 600; }}
+        QPushButton#appearanceButton {{ background: #172636; color: #c9d5df;
+            border: 1px solid #2a3d50; border-radius: 7px; padding: 6px; }}
+        QPushButton#appearanceButton:hover {{ background: #1d3042; }}
+        QPushButton#appearanceButton:checked {{ background: #20374c; color: white;
+            border: 2px solid #4f91e8; }}
         """
 
     def _configure_plotter(self) -> None:
@@ -543,13 +578,14 @@ class LenxWindow(QMainWindow):
         self.selected_label = None
 
         for item in case.meshes:
+            mesh_colour = colour_for_label(item.label, self.appearance_mode)
             vtk_faces = np.column_stack(
                 (np.full(len(item.faces), 3, dtype=np.int32), item.faces)
             ).ravel()
             mesh = pv.PolyData(item.vertices, vtk_faces)
             actor = self.plotter.add_mesh(
                 mesh,
-                color=item.colour,
+                color=mesh_colour,
                 smooth_shading=True,
                 specular=0.18,
                 ambient=0.16,
@@ -558,7 +594,7 @@ class LenxWindow(QMainWindow):
             )
             self.actor_labels[self._actor_key(actor)] = item.label
             self.label_actors[item.label] = actor
-            self.base_colours[item.label] = item.colour
+            self.base_colours[item.label] = mesh_colour
 
         self.plotter.add_axes(
             line_width=2,
@@ -568,6 +604,18 @@ class LenxWindow(QMainWindow):
             zlabel="S",
         )
         self.reset_camera()
+
+    @Slot(int)
+    def _set_appearance_mode(self, identifier: int) -> None:
+        modes = tuple(AppearanceMode)
+        if not 0 <= identifier < len(modes):
+            return
+        self.appearance_mode = modes[identifier]
+        for label in self.label_actors:
+            self.base_colours[label] = colour_for_label(label, self.appearance_mode)
+            self._refresh_actor(label)
+        if self.case is not None:
+            self.plotter.render()
 
     @staticmethod
     def _actor_key(actor: object) -> str:

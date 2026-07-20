@@ -12,18 +12,13 @@ import nibabel as nib
 import numpy as np
 
 from voxelscout.anatomy import vertebra_info
+from voxelscout.appearance import AppearanceMode, colour_for_label
 
 
 ProgressCallback = Callable[[int, str], None]
 Bounds3D = tuple[slice, slice, slice]
 
 
-REGION_COLOURS = {
-    "Cervical spine": "#22b8a7",
-    "Thoracic spine": "#3986d7",
-    "Lumbar spine": "#e58a35",
-    "Unmapped region": "#9b7ed0",
-}
 MIN_LABEL_VOXELS = 50
 
 
@@ -262,12 +257,11 @@ def _mesh_for_label(
     vertices, faces = _simplify_mesh(vertices, faces, target_faces)
     vertices.setflags(write=False)
     faces.setflags(write=False)
-    info = vertebra_info(label)
     return VertebraMesh(
         label=label,
         vertices=vertices,
         faces=faces,
-        colour=REGION_COLOURS.get(info.region, REGION_COLOURS["Unmapped region"]),
+        colour=colour_for_label(label, AppearanceMode.REGIONS),
     )
 
 
