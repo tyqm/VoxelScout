@@ -45,6 +45,26 @@ For CT-only automatic inference:
 python app.py --ct path\to\scan_ct.nii.gz
 ```
 
+For a DICOM CT folder, use the `Open CT` menu and choose `DICOM folder`, or run:
+
+```powershell
+python app.py --ct "D:\scans\dicom-series"
+```
+
+VoxelScout uses SimpleITK/GDCM to discover and order CT series. Localizers and
+very short scout series are excluded when a diagnostic series is available. If
+more than one candidate remains, the desktop app shows one compact chooser with
+description, shape, and spacing. Slice dimensions, in-plane spacing, direction,
+position, and inter-slice spacing are validated before conversion.
+
+GDCM applies the DICOM rescale slope/intercept while reading, preserving CT HU.
+VoxelScout writes a float32 NIfTI containing pixels and geometry only; it never
+modifies the source DICOM or copies patient metadata into the cache. Converted
+volumes are stored outside the repository under the local application-data cache
+(override with `VOXELSCOUT_DICOM_CACHE_DIR`) and reuse the existing prediction
+and mesh workflow. Loading reports `Reading DICOM series`, `Converting CT`, and
+the existing prediction source/status stages.
+
 ## Segmentation modes
 
 Trusted-mask mode remains the fastest and most reproducible path. Supply
@@ -107,6 +127,8 @@ reuse the cached prediction.
 
 - PySide6 provides a native Windows window; no browser or local web server opens.
 - PyVistaQt/VTK performs camera interaction and actor picking in the viewport.
+- DICOM is read and converted with SimpleITK/GDCM; no custom slice sorting is
+  used.
 - CT and segmentation geometry are validated before mesh construction; the CT
   is not resampled or normalized by VoxelScout.
 - The compact integer segmentation is released after mesh construction.

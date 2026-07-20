@@ -16,8 +16,10 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -32,6 +34,7 @@ from voxelscout.anatomy import vertebra_info
 from voxelscout.desktop_data import (
     SegmentedCase,
 )
+from voxelscout.dicom_import import DicomSeries, convert_dicom_series, discover_ct_series
 from voxelscout.inference.backend import SegmentationBackend
 from voxelscout.inference.workflow import load_case_for_ct
 
@@ -56,17 +59,26 @@ class CaseLoader(QObject):
         ct_path: Path,
         mask_path: Path | None = None,
         backend: SegmentationBackend | None = None,
+        dicom_series: DicomSeries | None = None,
     ) -> None:
         super().__init__()
         self.ct_path = ct_path
         self.mask_path = mask_path
         self.backend = backend
+        self.dicom_series = dicom_series
 
     @Slot()
     def run(self) -> None:
         try:
+            ct_path = self.ct_path
+            if self.dicom_series is not None:
+                converted = convert_dicom_series(
+                    self.dicom_series,
+                    progress=lambda value, message: self.progress.emit(value, message),
+                )
+                ct_path = converted.nifti_path
             case = load_case_for_ct(
-                self.ct_path,
+                ct_path,
                 self.mask_path,
                 backend=self.backend,
                 progress=lambda value, message: self.progress.emit(value, message),
@@ -139,7 +151,10 @@ class VoxelScoutWindow(QMainWindow):
         self.open_button = QPushButton("Open CT")
         self.open_button.setObjectName("redButton")
         self.open_button.setFixedHeight(40)
-        self.open_button.clicked.connect(self.open_case)
+        open_menu = QMenu(self.open_button)
+        open_menu.addAction("NIfTI file", self.open_nifti)
+        open_menu.addAction("DICOM folder", self.open_dicom)
+        self.open_button.setMenu(open_menu)
         controls_layout.addWidget(self.open_button)
 
         self.reset_button = QPushButton("Reset")
@@ -305,6 +320,11 @@ class VoxelScoutWindow(QMainWindow):
 
     @Slot()
     def open_case(self) -> None:
+        """Compatibility entry point used by callers that trigger Open CT."""
+        self.open_nifti()
+
+    @Slot()
+    def open_nifti(self) -> None:
         ct_name, _ = QFileDialog.getOpenFileName(
             self,
             "Open spinal CT",
@@ -315,7 +335,47 @@ class VoxelScoutWindow(QMainWindow):
             return
         self._start_loading(Path(ct_name))
 
-    def _start_loading(self, ct_path: Path, mask_path: Path | None = None) -> None:
+    @Slot()
+    def open_dicom(self) -> None:
+        folder_name = QFileDialog.getExistingDirectory(
+            self,
+            "Open DICOM CT folder",
+            str(Path.cwd() / "data"),
+        )
+        if not folder_name:
+            return
+        self.status_label.setText("Reading DICOM series")
+        self.status_label.show()
+        QApplication.processEvents()
+        try:
+            candidates = discover_ct_series(Path(folder_name))
+        except Exception as error:
+            self.status_label.hide()
+            QMessageBox.critical(self, "Unable to open DICOM", str(error))
+            return
+        selected = candidates[0]
+        if len(candidates) > 1:
+            choices = [candidate.display_name for candidate in candidates]
+            choice, accepted = QInputDialog.getItem(
+                self,
+                "Choose CT series",
+                "Multiple CT series were found:",
+                choices,
+                0,
+                False,
+            )
+            if not accepted:
+                self.status_label.hide()
+                return
+            selected = candidates[choices.index(choice)]
+        self._start_loading(selected.directory, dicom_series=selected)
+
+    def _start_loading(
+        self,
+        ct_path: Path,
+        mask_path: Path | None = None,
+        dicom_series: DicomSeries | None = None,
+    ) -> None:
         if self._load_thread is not None and self._load_thread.isRunning():
             return
         self.open_button.setEnabled(False)
@@ -327,7 +387,7 @@ class VoxelScoutWindow(QMainWindow):
         self.status_label.show()
 
         thread = QThread(self)
-        worker = CaseLoader(ct_path, mask_path, self._backend)
+        worker = CaseLoader(ct_path, mask_path, self._backend, dicom_series)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.progress.connect(self._on_progress)
@@ -546,7 +606,7 @@ class VoxelScoutWindow(QMainWindow):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="VoxelScout desktop 3D spine viewer")
-    parser.add_argument("--ct", type=Path, help="NIfTI CT volume to open")
+    parser.add_argument("--ct", type=Path, help="NIfTI CT volume or DICOM folder")
     parser.add_argument("--mask", type=Path, help="Matching labelled segmentation")
     args, qt_args = parser.parse_known_args()
     if args.mask is not None and args.ct is None:
@@ -558,7 +618,14 @@ def main() -> None:
     window = VoxelScoutWindow()
     window.show()
     if args.ct is not None:
-        QTimer.singleShot(0, lambda: window._start_loading(args.ct, args.mask))
+        def start_requested_case() -> None:
+            if args.ct.is_dir():
+                series = discover_ct_series(args.ct)[0]
+                window._start_loading(series.directory, dicom_series=series)
+            else:
+                window._start_loading(args.ct, args.mask)
+
+        QTimer.singleShot(0, start_requested_case)
     raise SystemExit(app.exec())
 
 

@@ -26,6 +26,7 @@ Dataset[0-9][0-9][0-9]_*/
 *.nii
 *.nii.gz
 *.dcm
+*.dicom
 
 # Training artifacts
 outputs/
