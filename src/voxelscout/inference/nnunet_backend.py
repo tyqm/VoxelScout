@@ -6,6 +6,7 @@ import hashlib
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,46 +21,37 @@ from voxelscout.inference.labels import training_to_verse_labels
 
 @dataclass(frozen=True)
 class NnUNetConfig:
-    results_dir: Path
-    dataset: str = "001"
-    configuration: str = "3d_lowres"
+    model_dir: Path | None = None
     folds: tuple[str, ...] = ("0",)
-    plans: str = "nnUNetResEncUNetMPlans"
-    trainer: str = "nnUNetTrainer"
     checkpoint: str = "checkpoint_final.pth"
-    command: str = "nnUNetv2_predict"
+    command: str = "nnUNetv2_predict_from_modelfolder"
+    device: str = "cpu"
+    preprocessing_processes: int = 1
+    export_processes: int = 1
 
     @classmethod
     def from_environment(cls) -> "NnUNetConfig":
-        results = os.environ.get("VOXELSCOUT_NNUNET_RESULTS") or os.environ.get(
-            "nnUNet_results"
-        )
-        if not results:
-            raise InferenceUnavailableError(
-                "Automatic segmentation is not configured. Set "
-                "VOXELSCOUT_NNUNET_RESULTS to an nnU-Net results directory."
-            )
+        model = os.environ.get("VOXELSCOUT_NNUNET_MODEL_DIR")
         folds = tuple(os.environ.get("VOXELSCOUT_NNUNET_FOLDS", "0").split())
         return cls(
-            results_dir=Path(results),
-            dataset=os.environ.get("VOXELSCOUT_NNUNET_DATASET", "001"),
-            configuration=os.environ.get(
-                "VOXELSCOUT_NNUNET_CONFIGURATION", "3d_lowres"
-            ),
+            model_dir=Path(model) if model else _discover_model_directory(),
             folds=folds or ("0",),
-            plans=os.environ.get(
-                "VOXELSCOUT_NNUNET_PLANS", "nnUNetResEncUNetMPlans"
-            ),
-            trainer=os.environ.get("VOXELSCOUT_NNUNET_TRAINER", "nnUNetTrainer"),
             checkpoint=os.environ.get(
                 "VOXELSCOUT_NNUNET_CHECKPOINT", "checkpoint_final.pth"
             ),
-            command=os.environ.get("VOXELSCOUT_NNUNET_COMMAND", "nnUNetv2_predict"),
+            command=os.environ.get(
+                "VOXELSCOUT_NNUNET_COMMAND"
+            ) or _discover_predict_command(),
+            device=os.environ.get("VOXELSCOUT_NNUNET_DEVICE", "cpu"),
+            preprocessing_processes=int(
+                os.environ.get("VOXELSCOUT_NNUNET_NPP", "1")
+            ),
+            export_processes=int(os.environ.get("VOXELSCOUT_NNUNET_NPS", "1")),
         )
 
     @property
     def identity(self) -> str:
-        model = self.model_directory()
+        model = self.resolved_model_directory()
         tracked_files = [model / "plans.json"] + [
             model / f"fold_{fold}" / self.checkpoint for fold in self.folds
         ]
@@ -74,40 +66,54 @@ class NnUNetConfig:
             for path in tracked_files
         )
         fields = (
-            self.results_dir.resolve(),
-            self.dataset,
-            self.configuration,
+            model.resolve(),
             self.folds,
-            self.plans,
-            self.trainer,
             self.checkpoint,
             self.command,
+            self.device,
+            self.preprocessing_processes,
+            self.export_processes,
             model_state,
         )
         return hashlib.sha256(repr(fields).encode("utf-8")).hexdigest()
 
-    def model_directory(self) -> Path:
-        dataset_name = (
-            self.dataset
-            if self.dataset.startswith("Dataset")
-            else f"Dataset{int(self.dataset):03d}_VerSe"
+    def resolved_model_directory(self) -> Path:
+        if self.model_dir is not None:
+            return Path(self.model_dir).expanduser().resolve()
+        raise InferenceUnavailableError(
+            "Automatic segmentation model was not found. Set "
+            "VOXELSCOUT_NNUNET_MODEL_DIR to the trained nnU-Net model folder."
         )
-        return (
-            self.results_dir
-            / dataset_name
-            / f"{self.trainer}__{self.plans}__{self.configuration}"
+
+    def resolved_command(self) -> str:
+        candidate = Path(self.command).expanduser()
+        if candidate.is_file():
+            return str(candidate.resolve())
+        discovered = shutil.which(self.command)
+        if discovered:
+            return discovered
+        raise InferenceUnavailableError(
+            f"Automatic segmentation command was not found: {self.command}. "
+            "Set VOXELSCOUT_NNUNET_COMMAND to "
+            "nnUNetv2_predict_from_modelfolder in the inference environment."
         )
 
     def validate(self) -> None:
-        if shutil.which(self.command) is None:
-            raise InferenceUnavailableError(
-                f"Automatic segmentation command was not found: {self.command}. "
-                "Install nnU-Net v2 in the inference environment."
-            )
-        model = self.model_directory()
+        self.resolved_command()
+        model = self.resolved_model_directory()
         if not model.is_dir():
             raise InferenceUnavailableError(
                 f"Configured nnU-Net model directory does not exist: {model}"
+            )
+        metadata_missing = [
+            str(model / name)
+            for name in ("dataset.json", "plans.json")
+            if not (model / name).is_file()
+        ]
+        if metadata_missing:
+            raise InferenceUnavailableError(
+                "Configured nnU-Net model metadata was not found: "
+                + ", ".join(metadata_missing)
             )
         missing = [
             str(model / f"fold_{fold}" / self.checkpoint)
@@ -145,7 +151,7 @@ class NnUNetBackend:
         report = progress or (lambda _value, _message: None)
         self.config.validate()
         ct_path = Path(ct_path).resolve()
-        report(18, "Preparing inference")
+        report(18, "Real model inference · preparing")
         with tempfile.TemporaryDirectory(prefix="voxelscout-nnunet-") as temporary:
             root = Path(temporary)
             input_dir = root / "input"
@@ -155,27 +161,27 @@ class NnUNetBackend:
             input_path = input_dir / "case_0000.nii.gz"
             shutil.copyfile(ct_path, input_path)
             command = [
-                self.config.command,
-                "-d",
-                self.config.dataset,
-                "-c",
-                self.config.configuration,
-                "-f",
-                *self.config.folds,
-                "-p",
-                self.config.plans,
-                "-tr",
-                self.config.trainer,
-                "-chk",
-                self.config.checkpoint,
+                self.config.resolved_command(),
                 "-i",
                 str(input_dir),
                 "-o",
                 str(output_dir),
+                "-m",
+                str(self.config.resolved_model_directory()),
+                "-f",
+                *self.config.folds,
+                "-chk",
+                self.config.checkpoint,
+                "-npp",
+                str(self.config.preprocessing_processes),
+                "-nps",
+                str(self.config.export_processes),
+                "-device",
+                self.config.device,
+                "--disable_progress_bar",
             ]
             environment = os.environ.copy()
-            environment["nnUNet_results"] = str(self.config.results_dir.resolve())
-            report(25, "Running vertebra segmentation")
+            report(25, "Real model inference · running nnU-Net")
             completed = subprocess.run(
                 command,
                 capture_output=True,
@@ -202,3 +208,40 @@ class NnUNetBackend:
                 affine=np.asarray(prediction.affine, dtype=float),
                 source=f"{self.name}:{self.cache_key}",
             )
+
+
+def _discover_predict_command() -> str:
+    name = (
+        "nnUNetv2_predict_from_modelfolder.exe"
+        if os.name == "nt"
+        else "nnUNetv2_predict_from_modelfolder"
+    )
+    discovered = shutil.which(name)
+    if discovered:
+        return discovered
+    candidates = [
+        Path(sys.prefix).parent / "verse-pretrained" / "Scripts" / name,
+        Path.home() / "miniforge3" / "envs" / "verse-pretrained" / "Scripts" / name,
+        Path.home() / "miniconda3" / "envs" / "verse-pretrained" / "Scripts" / name,
+    ]
+    return str(next((path for path in candidates if path.is_file()), Path(name)))
+
+
+def _discover_model_directory() -> Path | None:
+    model_name = "nnUNetTrainer__nnUNetResEncUNetMPlans__3d_lowres"
+    source_checkout = Path(__file__).resolve().parents[3]
+    candidates = [
+        source_checkout.parent
+        / "VoxelScout-ML"
+        / "downloads"
+        / "verse-pretrained"
+        / "nnUNet_results"
+        / model_name,
+        Path.cwd().parent
+        / "VoxelScout-ML"
+        / "downloads"
+        / "verse-pretrained"
+        / "nnUNet_results"
+        / model_name,
+    ]
+    return next((path.resolve() for path in candidates if path.is_dir()), None)

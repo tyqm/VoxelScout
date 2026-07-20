@@ -119,11 +119,18 @@ def test_companion_mask_bypasses_inference_backend(tmp_path: Path) -> None:
         mask_dir / "sub-test_seg-vert_msk.nii.gz",
     )
     backend = FakeBackend(affine, data.shape)
+    updates: list[str] = []
 
-    case = load_case_for_ct(ct_path, backend=backend, cache_dir=tmp_path / "cache")
+    case = load_case_for_ct(
+        ct_path,
+        backend=backend,
+        cache_dir=tmp_path / "cache",
+        progress=lambda _value, message: updates.append(message),
+    )
 
     assert backend.calls == 0
     assert case.labels == (20,)
+    assert "Using companion mask" in updates
 
 
 def test_missing_companion_uses_backend_and_existing_mesh_pipeline(
@@ -132,6 +139,7 @@ def test_missing_companion_uses_backend_and_existing_mesh_pipeline(
     ct_path, data, affine = write_ct(tmp_path / "standalone_ct.nii.gz")
     backend = FakeBackend(affine, data.shape)
     updates: list[str] = []
+    cached_updates: list[str] = []
 
     first = load_case_for_ct(
         ct_path,
@@ -145,18 +153,21 @@ def test_missing_companion_uses_backend_and_existing_mesh_pipeline(
         backend=backend,
         cache_dir=tmp_path / "cache",
         sample_step=1,
+        progress=lambda _value, message: cached_updates.append(message),
     )
 
     assert backend.calls == 1
     assert first.labels == (28,)
     assert second.labels == (28,)
-    assert any("Running vertebra segmentation" == message for message in updates)
+    assert "Running pretrained nnU-Net model" in updates
+    assert "Running vertebra segmentation" in updates
+    assert "Using cached prediction" in cached_updates
     assert list((tmp_path / "cache").glob("*.nii.gz"))
 
 
 def test_backend_unavailable_has_clear_error(tmp_path: Path) -> None:
     config = NnUNetConfig(
-        results_dir=tmp_path / "missing-results",
+        model_dir=tmp_path / "missing-model",
         command="voxelscout-command-that-does-not-exist",
     )
 

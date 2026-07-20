@@ -99,6 +99,7 @@ def load_case_for_ct(
         selected_mask = find_companion_mask(ct_path)
 
     if selected_mask is not None:
+        report(12, "Using companion mask")
         segmentation = load_segmentation_volume(selected_mask)
     else:
         predictor = backend or NnUNetBackend.from_environment()
@@ -106,13 +107,15 @@ def load_case_for_ct(
             ct_path, predictor, cache_dir or default_cache_directory()
         )
         if prediction_path.is_file():
+            report(16, "Using cached prediction")
             segmentation = load_segmentation_volume(
                 prediction_path,
                 source=f"prediction-cache:{predictor.name}:{predictor.cache_key}",
             )
         else:
+            report(16, "Running pretrained nnU-Net model")
             segmentation = predictor.predict(ct_path, progress=report)
-            report(72, "Validating prediction")
+            report(72, "Real model inference · validating prediction")
             _validate_prediction_geometry(ct.data.shape, ct.affine, segmentation)
             segmentation = SegmentationVolume(
                 labels=segmentation.labels,

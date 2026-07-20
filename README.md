@@ -4,6 +4,8 @@ VoxelScout is a desktop educational tool that converts segmented spinal CT data
 into an interactive 3D model, allowing non-specialist users to identify and
 understand visible vertebrae through direct exploration.
 
+Current CT-only workflow: `standalone NIfTI CT → pretrained nnU-Net → labelled 3D spine`.
+
 ## Desktop application
 
 The Windows application deliberately focuses on one workflow:
@@ -52,29 +54,33 @@ used before automatic inference.
 
 CT-only mode uses an external nnU-Net v2 command in the background. nnU-Net,
 PyTorch, and model weights are intentionally not mandatory viewer dependencies.
-Configure the verified VerSe model from PowerShell before starting VoxelScout:
+VoxelScout automatically detects the adjacent development checkout used for the
+verified local model (`VoxelScout-ML`) and its `verse-pretrained` Conda
+environment. For another installation, configure the direct model folder and
+the matching executable before starting VoxelScout:
 
 ```powershell
-$env:VOXELSCOUT_NNUNET_RESULTS = "D:\nnUNet\nnUNet_results"
-$env:VOXELSCOUT_NNUNET_DATASET = "001"
-$env:VOXELSCOUT_NNUNET_CONFIGURATION = "3d_lowres"
+$env:VOXELSCOUT_NNUNET_MODEL_DIR = `
+  "D:\models\nnUNetTrainer__nnUNetResEncUNetMPlans__3d_lowres"
+$env:VOXELSCOUT_NNUNET_COMMAND = `
+  "D:\miniforge3\envs\verse-pretrained\Scripts\nnUNetv2_predict_from_modelfolder.exe"
 $env:VOXELSCOUT_NNUNET_FOLDS = "0"
-$env:VOXELSCOUT_NNUNET_PLANS = "nnUNetResEncUNetMPlans"
-$env:VOXELSCOUT_NNUNET_TRAINER = "nnUNetTrainer"
 $env:VOXELSCOUT_NNUNET_CHECKPOINT = "checkpoint_final.pth"
+$env:VOXELSCOUT_NNUNET_DEVICE = "cpu"
 python app.py --ct "D:\scans\scan_ct.nii.gz"
 ```
 
-The defaults above match the locally documented pretrained VerSe model and its
-`nnUNetv2_predict` command. `VOXELSCOUT_NNUNET_COMMAND` can select another
-executable, and `VOXELSCOUT_CACHE_DIR` can relocate cached predictions. The
-results directory must use nnU-Net's standard layout, for example:
+These settings match the verified pretrained VerSe model and its
+`nnUNetv2_predict_from_modelfolder` command. This direct model-folder entry point
+does not depend on a legacy dataset-ID or results-directory convention.
+`VOXELSCOUT_CACHE_DIR` can relocate cached predictions. The model folder must
+contain nnU-Net metadata and the selected fold checkpoint:
 
 ```text
-nnUNet_results/
-`-- Dataset001_VerSe/
-    `-- nnUNetTrainer__nnUNetResEncUNetMPlans__3d_lowres/
-        `-- fold_0/checkpoint_final.pth
+nnUNetTrainer__nnUNetResEncUNetMPlans__3d_lowres/
+|-- dataset.json
+|-- plans.json
+`-- fold_0/checkpoint_final.pth
 ```
 
 If the command, model directory, or checkpoint is unavailable, loading stops
@@ -82,6 +88,20 @@ with a specific error; VoxelScout never fabricates a mask or downloads a model.
 Predictions are cached by CT modification state and backend/model configuration,
 so changing the CT or configuration does not reuse a stale result. Prediction
 label `26` is converted back to VerSe/VoxelScout label `28` before mesh creation.
+
+The loading status identifies the selected source as `companion mask`, `cached
+prediction`, or `real model inference`; this does not add configuration controls
+to the desktop UI.
+
+## Verified CT-only acceptance
+
+The real local acceptance run copied a 512 x 512 x 229 CT into an independent
+directory containing no mask, cleared the prediction cache, and opened only that
+CT from the GUI. The pretrained nnU-Net process produced 11 labelled vertebrae,
+the existing mesh pipeline rendered all 11, and hover/click selection was
+confirmed in the 3D view. CPU inference took 224.87 seconds (about 225 seconds)
+on the acceptance machine. Runtime is hardware-dependent; subsequent opens can
+reuse the cached prediction.
 
 ## Performance design
 
