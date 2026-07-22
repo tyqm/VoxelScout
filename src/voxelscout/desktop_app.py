@@ -10,13 +10,23 @@ from pathlib import Path
 import numpy as np
 import pyvista as pv
 from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, Qt, QThread, QTimer, Signal, Slot
-from PySide6.QtGui import QColor, QCloseEvent, QCursor, QPainter, QPaintEvent, QPen
+from PySide6.QtGui import (
+    QColor,
+    QCloseEvent,
+    QCursor,
+    QLinearGradient,
+    QMouseEvent,
+    QPainter,
+    QPaintEvent,
+    QPen,
+    QRadialGradient,
+    QWheelEvent,
+)
 from PySide6.QtWidgets import (
     QApplication,
-    QButtonGroup,
+    QDial,
     QFileDialog,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -145,13 +155,121 @@ class ScaleBarOverlay(QWidget):
         painter.drawText(QPointF(right - 48, baseline - 8), text)
 
 
+class AppearanceDial(QDial):
+    """A tactile three-position dial constrained to a 180-degree arc."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setRange(0, 2)
+        self.setSingleStep(1)
+        self.setPageStep(1)
+        self.setWrapping(False)
+        self.setFixedSize(112, 104)
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 - Qt API
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        centre = QPointF(self.width() / 2, 57)
+        radius = 37.0
+
+        arc_rect = QRectF(
+            centre.x() - radius - 8,
+            centre.y() - radius - 8,
+            (radius + 8) * 2,
+            (radius + 8) * 2,
+        )
+        painter.setPen(QPen(QColor("#4d91c2"), 2.0))
+        painter.drawArc(arc_rect, 0, 180 * 16)
+
+        for value in range(3):
+            point = self._point_for_value(value, centre, radius + 10)
+            inner = self._point_for_value(value, centre, radius + 3)
+            painter.setPen(QPen(QColor("#8395a5"), 1.4))
+            painter.drawLine(inner, point)
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 95))
+        painter.drawEllipse(QPointF(centre.x() + 2, centre.y() + 4), radius + 3, radius + 3)
+
+        bezel = QLinearGradient(
+            centre.x() - radius,
+            centre.y() - radius,
+            centre.x() + radius,
+            centre.y() + radius,
+        )
+        bezel.setColorAt(0.0, QColor("#eef1f3"))
+        bezel.setColorAt(0.48, QColor("#aab0b5"))
+        bezel.setColorAt(1.0, QColor("#626b72"))
+        painter.setBrush(bezel)
+        painter.setPen(QPen(QColor("#dce3e8"), 1.2))
+        painter.drawEllipse(centre, radius + 2, radius + 2)
+
+        face = QRadialGradient(
+            QPointF(centre.x() - 12, centre.y() - 14),
+            radius * 1.35,
+            centre,
+        )
+        face.setColorAt(0.0, QColor("#f1eee5"))
+        face.setColorAt(0.52, QColor("#cbc8c0"))
+        face.setColorAt(1.0, QColor("#8d9295"))
+        painter.setBrush(face)
+        painter.setPen(QPen(QColor("#67727b"), 1.2))
+        painter.drawEllipse(centre, radius - 2, radius - 2)
+
+        marker = self._point_for_value(self.value(), centre, radius * 0.67)
+        painter.setBrush(QColor(0, 0, 0, 80))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(QPointF(marker.x() + 1.5, marker.y() + 2), 8.0, 8.0)
+        marker_fill = QRadialGradient(
+            QPointF(marker.x() - 2, marker.y() - 3), 10.0, marker
+        )
+        marker_fill.setColorAt(0.0, QColor("#f5f3ee"))
+        marker_fill.setColorAt(1.0, QColor("#8d9294"))
+        painter.setBrush(marker_fill)
+        painter.setPen(QPen(QColor("#62696e"), 1.0))
+        painter.drawEllipse(marker, 7.5, 7.5)
+
+    @staticmethod
+    def _point_for_value(value: int, centre: QPointF, radius: float) -> QPointF:
+        angle = np.pi + (int(value) / 2.0) * np.pi
+        return QPointF(
+            centre.x() + np.cos(angle) * radius,
+            centre.y() + np.sin(angle) * radius,
+        )
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt API
+        self._set_value_from_position(event.position())
+        event.accept()
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt API
+        if event.buttons() & Qt.MouseButton.LeftButton:
+            self._set_value_from_position(event.position())
+            event.accept()
+
+    def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802 - Qt API
+        step = 1 if event.angleDelta().y() > 0 else -1
+        self.setValue(min(self.maximum(), max(self.minimum(), self.value() + step)))
+        event.accept()
+
+    def _set_value_from_position(self, position: QPointF) -> None:
+        centre = QPointF(self.width() / 2, 57)
+        dx = position.x() - centre.x()
+        dy = position.y() - centre.y()
+        angle = np.degrees(np.arctan2(-dy, dx))
+        if angle < 0:
+            value = 0 if dx < 0 else 2
+        else:
+            value = round((180.0 - min(angle, 180.0)) / 90.0)
+        self.setValue(min(2, max(0, value)))
+
+
 class LenxWindow(QMainWindow):
     """One-window 3D vertebra explorer for education and communication."""
 
     def __init__(self, backend: SegmentationBackend | None = None) -> None:
         super().__init__()
         self._backend = backend
-        self.appearance_mode = AppearanceMode.REGIONS
+        self.appearance_mode = AppearanceMode.LABELS
         self.case: SegmentedCase | None = None
         self.actor_labels: dict[str, int] = {}
         self.label_actors: dict[int, object] = {}
@@ -247,28 +365,27 @@ class LenxWindow(QMainWindow):
         appearance_title = QLabel("Appearance")
         appearance_title.setObjectName("appearanceTitle")
         info_layout.addWidget(appearance_title)
-        appearance_grid = QGridLayout()
-        appearance_grid.setContentsMargins(0, 2, 0, 0)
-        appearance_grid.setSpacing(8)
-        self.appearance_group = QButtonGroup(self)
-        self.appearance_group.setExclusive(True)
-        appearance_modes = (
-            (AppearanceMode.NATURAL, 0, 0, 1, 1),
-            (AppearanceMode.REGIONS, 0, 1, 1, 1),
-            (AppearanceMode.LABELS, 1, 0, 1, 2),
+        info_layout.addSpacing(22)
+        self.appearance_dial = AppearanceDial()
+        self.appearance_dial.setObjectName("appearanceDial")
+        self.appearance_dial.setAccessibleName("Appearance preset")
+        self.appearance_dial.setValue(tuple(AppearanceMode).index(self.appearance_mode))
+        self.appearance_dial.valueChanged.connect(self._set_appearance_mode)
+        info_layout.addWidget(
+            self.appearance_dial, 0, Qt.AlignmentFlag.AlignHCenter
         )
-        for identifier, (mode, row, column, row_span, column_span) in enumerate(
-            appearance_modes
-        ):
-            button = QPushButton(mode.value)
-            button.setObjectName("appearanceButton")
-            button.setCheckable(True)
-            button.setFixedHeight(46)
-            button.setChecked(mode is self.appearance_mode)
-            self.appearance_group.addButton(button, identifier)
-            appearance_grid.addWidget(button, row, column, row_span, column_span)
-        self.appearance_group.idClicked.connect(self._set_appearance_mode)
-        info_layout.addLayout(appearance_grid)
+        dial_labels_widget = QWidget()
+        dial_labels_widget.setFixedWidth(150)
+        dial_labels = QHBoxLayout(dial_labels_widget)
+        dial_labels.setContentsMargins(0, 0, 0, 0)
+        for text in ("Natural", "Regions", "Labels"):
+            label = QLabel(text)
+            label.setObjectName("dialLabel")
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            dial_labels.addWidget(label, 1)
+        info_layout.addWidget(
+            dial_labels_widget, 0, Qt.AlignmentFlag.AlignHCenter
+        )
         info_layout.addStretch(1)
         sidebar_layout.addWidget(info_panel, 1)
         content_layout.addWidget(sidebar)
@@ -350,11 +467,7 @@ class LenxWindow(QMainWindow):
         QLabel#pillRegion {{ color: #747d8c; font-size: 12px; font-weight: 500; }}
         QLabel#statusLabel {{ color: {MUTED}; font-size: 11px; }}
         QLabel#appearanceTitle {{ color: {MUTED}; font-size: 12px; font-weight: 600; }}
-        QPushButton#appearanceButton {{ background: #172636; color: #c9d5df;
-            border: 1px solid #2a3d50; border-radius: 7px; padding: 6px; }}
-        QPushButton#appearanceButton:hover {{ background: #1d3042; }}
-        QPushButton#appearanceButton:checked {{ background: #20374c; color: white;
-            border: 2px solid #4f91e8; }}
+        QLabel#dialLabel {{ color: #93a4b5; font-size: 9px; }}
         """
 
     def _configure_plotter(self) -> None:
