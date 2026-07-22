@@ -15,8 +15,8 @@ existing model installations and caches.
 
 The Windows application deliberately focuses on one workflow:
 
-1. Open a NIfTI CT or DICOM CT folder. Lenx uses a trusted companion mask
-   when present and otherwise runs the configured nnU-Net backend.
+1. Open a NIfTI CT or DICOM CT folder. Lenx always obtains a Prediction Mask
+   from the configured segmentation backend (or its matching prediction cache).
 2. Wait while one simplified mesh is generated and cached for each vertebra.
 3. Rotate, zoom, and pan the coloured 3D spine.
 4. Hover to see the vertebra code, anatomical name, and spinal region.
@@ -37,10 +37,10 @@ You can also launch it directly:
 python app.py
 ```
 
-For a scripted launch with a known VerSe pair:
+For a scripted launch with an optional Ground Truth reference:
 
 ```powershell
-python app.py --ct path\to\scan_ct.nii.gz --mask path\to\scan_seg-vert_msk.nii.gz
+python app.py --ct path\to\scan_ct.nii.gz --ground-truth path\to\reference_mask.nii.gz
 ```
 
 For CT-only automatic inference:
@@ -69,14 +69,11 @@ volumes are stored outside the repository under the local application-data cache
 and mesh workflow. Loading reports `Reading DICOM series`, `Converting CT`, and
 the existing prediction source/status stages.
 
-## Segmentation modes
+## Automatic segmentation and optional evaluation
 
-Trusted-mask mode remains the fastest and most reproducible path. Supply
-`--mask`, or place a matching `*_seg-vert_msk.nii.gz` beside the CT or in the
-official VerSe `derivatives/sub-*` location. A discovered trusted mask is always
-used before automatic inference.
-
-CT-only mode uses an external nnU-Net v2 command in the background. nnU-Net,
+The normal workflow accepts CT only and uses an external nnU-Net v2 command in
+the background. Existing companion masks are not discovered or used to bypass
+inference. nnU-Net,
 PyTorch, and model weights are intentionally not mandatory viewer dependencies.
 Lenx automatically detects the adjacent development checkout used for the
 verified local model (`VoxelScout-ML`) and its `verse-pretrained` Conda
@@ -113,9 +110,14 @@ Predictions are cached by CT modification state and backend/model configuration,
 so changing the CT or configuration does not reuse a stale result. Prediction
 label `26` is converted back to VerSe/Lenx label `28` before mesh creation.
 
-The loading status identifies the selected source as `companion mask`, `cached
-prediction`, or `real model inference`; this does not add configuration controls
-to the desktop UI.
+The loading status identifies `Loading CT`, `Running segmentation`,
+`Generating 3D model`, and `Complete`; cache reuse is shown as `Cached
+prediction`. The lower Model Performance panel identifies the active backend,
+status, inference time, and available peak-memory measurement. An optional
+Ground Truth mask can be selected through `NIfTI + Ground Truth` or
+`--ground-truth`; it is used only to calculate foreground Dice, IoU, and physical
+HD95. Without a reference these metrics show `N/A — reference mask required`
+and prediction, 2D overlay, and 3D interaction remain fully available.
 
 ## Verified CT-only acceptance
 

@@ -70,13 +70,13 @@ class CaseLoader(QObject):
     def __init__(
         self,
         ct_path: Path,
-        mask_path: Path | None = None,
+        ground_truth_path: Path | None = None,
         backend: SegmentationBackend | None = None,
         dicom_series: DicomSeries | None = None,
     ) -> None:
         super().__init__()
         self.ct_path = ct_path
-        self.mask_path = mask_path
+        self.ground_truth_path = ground_truth_path
         self.backend = backend
         self.dicom_series = dicom_series
 
@@ -92,7 +92,7 @@ class CaseLoader(QObject):
                 ct_path = converted.nifti_path
             case = load_case_for_ct(
                 ct_path,
-                self.mask_path,
+                self.ground_truth_path,
                 backend=self.backend,
                 progress=lambda value, message: self.progress.emit(value, message),
             )
@@ -316,7 +316,9 @@ class LenxWindow(QMainWindow):
         self.open_button.setFixedHeight(40)
         open_menu = QMenu(self.open_button)
         open_menu.addAction("NIfTI file", self.open_nifti)
+        open_menu.addAction("NIfTI + Ground Truth", self.open_nifti_with_ground_truth)
         open_menu.addAction("DICOM folder", self.open_dicom)
+        open_menu.addAction("DICOM + Ground Truth", self.open_dicom_with_ground_truth)
         self.open_button.setMenu(open_menu)
         controls_layout.addWidget(self.open_button)
 
@@ -362,6 +364,27 @@ class LenxWindow(QMainWindow):
         info_layout = QVBoxLayout(info_panel)
         info_layout.setContentsMargins(18, 18, 18, 18)
         info_layout.setSpacing(8)
+        performance_title = QLabel("Model Performance")
+        performance_title.setObjectName("performanceTitle")
+        info_layout.addWidget(performance_title)
+        self.performance_values: dict[str, QLabel] = {}
+        for title in (
+            "Model name",
+            "Segmentation status",
+            "Inference time",
+            "Peak memory",
+            "Dice",
+            "IoU",
+            "HD95",
+        ):
+            label = QLabel(title)
+            label.setObjectName("performanceLabel")
+            value = QLabel("N/A")
+            value.setObjectName("performanceValue")
+            value.setWordWrap(True)
+            info_layout.addWidget(label)
+            info_layout.addWidget(value)
+            self.performance_values[title] = value
         info_layout.addStretch(1)
         sidebar_layout.addWidget(info_panel, 1)
         content_layout.addWidget(sidebar)
@@ -436,6 +459,9 @@ class LenxWindow(QMainWindow):
         QLabel#pillName {{ color: #3e4552; font-size: 13px; font-weight: 600; }}
         QLabel#pillRegion {{ color: #747d8c; font-size: 12px; font-weight: 500; }}
         QLabel#appearanceTitle {{ color: {MUTED}; font-size: 12px; font-weight: 600; }}
+        QLabel#performanceTitle {{ color: {TEXT}; font-size: 13px; font-weight: 700; }}
+        QLabel#performanceLabel {{ color: {MUTED}; font-size: 9px; margin-top: 2px; }}
+        QLabel#performanceValue {{ color: {TEXT}; font-size: 11px; }}
         QLabel#dialLabel {{ color: #93a4b5; font-size: 9px; }}
         """
 
@@ -554,6 +580,26 @@ class LenxWindow(QMainWindow):
         self._start_loading(Path(ct_name))
 
     @Slot()
+    def open_nifti_with_ground_truth(self) -> None:
+        ct_name, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open spinal CT (required)",
+            str(Path.cwd() / "data"),
+            "NIfTI volumes (*.nii *.nii.gz);;All files (*.*)",
+        )
+        if not ct_name:
+            return
+        reference_name, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open Ground Truth mask (optional evaluation only)",
+            str(Path(ct_name).parent),
+            "NIfTI volumes (*.nii *.nii.gz);;All files (*.*)",
+        )
+        self._start_loading(
+            Path(ct_name), Path(reference_name) if reference_name else None
+        )
+
+    @Slot()
     def open_dicom(self) -> None:
         folder_name = QFileDialog.getExistingDirectory(
             self,
@@ -562,10 +608,32 @@ class LenxWindow(QMainWindow):
         )
         if not folder_name:
             return
+        self._start_dicom_folder(Path(folder_name))
+
+    @Slot()
+    def open_dicom_with_ground_truth(self) -> None:
+        folder_name = QFileDialog.getExistingDirectory(
+            self, "Open DICOM CT folder (required)", str(Path.cwd() / "data")
+        )
+        if not folder_name:
+            return
+        reference_name, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open Ground Truth mask (optional evaluation only)",
+            str(Path(folder_name).parent),
+            "NIfTI volumes (*.nii *.nii.gz);;All files (*.*)",
+        )
+        self._start_dicom_folder(
+            Path(folder_name), Path(reference_name) if reference_name else None
+        )
+
+    def _start_dicom_folder(
+        self, folder: Path, ground_truth_path: Path | None = None
+    ) -> None:
         self._show_loading_pill(0, "Reading DICOM series")
         QApplication.processEvents()
         try:
-            candidates = discover_ct_series(Path(folder_name))
+            candidates = discover_ct_series(folder)
         except Exception as error:
             self.info_pill.hide()
             QMessageBox.critical(self, "Unable to open DICOM", str(error))
@@ -586,12 +654,14 @@ class LenxWindow(QMainWindow):
                 self.info_pill.hide()
                 return
             selected = candidates[choices.index(choice)]
-        self._start_loading(selected.directory, dicom_series=selected)
+        self._start_loading(
+            selected.directory, ground_truth_path, dicom_series=selected
+        )
 
     def _start_loading(
         self,
         ct_path: Path,
-        mask_path: Path | None = None,
+        ground_truth_path: Path | None = None,
         dicom_series: DicomSeries | None = None,
     ) -> None:
         if self._load_thread is not None and self._load_thread.isRunning():
@@ -602,10 +672,11 @@ class LenxWindow(QMainWindow):
         self.open_button.setEnabled(False)
         self.reset_button.setEnabled(False)
         self.review_button.setEnabled(False)
+        self.performance_values["Segmentation status"].setText("Loading CT")
         self._show_loading_pill(0, "Reading CT")
 
         thread = QThread(self)
-        worker = CaseLoader(ct_path, mask_path, self._backend, dicom_series)
+        worker = CaseLoader(ct_path, ground_truth_path, self._backend, dicom_series)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.progress.connect(self._on_progress)
@@ -622,6 +693,14 @@ class LenxWindow(QMainWindow):
 
     @Slot(int, str)
     def _on_progress(self, value: int, message: str) -> None:
+        if message in {
+            "Loading CT",
+            "Running segmentation",
+            "Cached prediction",
+            "Generating 3D model",
+            "Complete",
+        }:
+            self.performance_values["Segmentation status"].setText(message)
         self._show_loading_pill(value, message)
 
     @Slot(object)
@@ -636,6 +715,7 @@ class LenxWindow(QMainWindow):
         self.review_button.setEnabled(True)
         self._populate_scene(case)
         self._set_selected(None)
+        self._show_model_performance(case)
 
     @Slot(str)
     def _on_load_failed(self, message: str) -> None:
@@ -787,6 +867,31 @@ class LenxWindow(QMainWindow):
     def _show_case_summary(self) -> None:
         """The reserved lower-left panel intentionally stays empty."""
 
+    def _show_model_performance(self, case: SegmentedCase) -> None:
+        values = self.performance_values
+        values["Model name"].setText(case.model_name)
+        values["Segmentation status"].setText(case.segmentation_status)
+        values["Inference time"].setText(
+            f"{case.inference_time_seconds:.1f} s"
+            if case.inference_time_seconds is not None
+            else "N/A — cached prediction"
+        )
+        values["Peak memory"].setText(
+            f"{case.peak_memory_mib:.0f} MiB"
+            if case.peak_memory_mib is not None
+            else "N/A — backend unavailable"
+        )
+        reference_required = "N/A — reference mask required"
+        values["Dice"].setText(
+            f"{case.dice:.3f}" if case.dice is not None else reference_required
+        )
+        values["IoU"].setText(
+            f"{case.iou:.3f}" if case.iou is not None else reference_required
+        )
+        values["HD95"].setText(
+            f"{case.hd95_mm:.1f} mm" if case.hd95_mm is not None else reference_required
+        )
+
     def _position_info_pill(self) -> None:
         viewport = self.plotter.interactor
         origin = viewport.mapToGlobal(QPoint(0, 0))
@@ -893,10 +998,14 @@ class LenxWindow(QMainWindow):
 def main() -> None:
     parser = argparse.ArgumentParser(description="Lenx desktop 3D spine viewer")
     parser.add_argument("--ct", type=Path, help="NIfTI CT volume or DICOM folder")
-    parser.add_argument("--mask", type=Path, help="Matching labelled segmentation")
+    parser.add_argument(
+        "--ground-truth", type=Path, help="Optional reference mask for metrics only"
+    )
+    parser.add_argument("--mask", type=Path, help=argparse.SUPPRESS)
     args, qt_args = parser.parse_known_args()
-    if args.mask is not None and args.ct is None:
-        parser.error("--mask requires --ct")
+    reference = args.ground_truth or args.mask
+    if reference is not None and args.ct is None:
+        parser.error("--ground-truth requires --ct")
 
     app = QApplication.instance() or QApplication([sys.argv[0], *qt_args])
     app.setApplicationName("Lenx")
@@ -907,9 +1016,11 @@ def main() -> None:
         def start_requested_case() -> None:
             if args.ct.is_dir():
                 series = discover_ct_series(args.ct)[0]
-                window._start_loading(series.directory, dicom_series=series)
+                window._start_loading(
+                    series.directory, reference, dicom_series=series
+                )
             else:
-                window._start_loading(args.ct, args.mask)
+                window._start_loading(args.ct, reference)
 
         QTimer.singleShot(0, start_requested_case)
     raise SystemExit(app.exec())

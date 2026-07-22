@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -129,6 +130,7 @@ class NnUNetConfig:
 class NnUNetBackend:
     def __init__(self, config: NnUNetConfig) -> None:
         self.config = config
+        self.last_peak_memory_mib: float | None = None
 
     @classmethod
     def from_environment(cls) -> "NnUNetBackend":
@@ -182,12 +184,9 @@ class NnUNetBackend:
             ]
             environment = os.environ.copy()
             report(25, "Real model inference · running nnU-Net")
-            completed = subprocess.run(
+            completed, self.last_peak_memory_mib = _run_command(
                 command,
-                capture_output=True,
-                text=True,
                 env=environment,
-                check=False,
             )
             if completed.returncode != 0:
                 detail = (completed.stderr or completed.stdout).strip()
@@ -208,6 +207,109 @@ class NnUNetBackend:
                 affine=np.asarray(prediction.affine, dtype=float),
                 source=f"{self.name}:{self.cache_key}",
             )
+
+
+def _run_command(
+    command: list[str], *, env: dict[str, str]
+) -> tuple[subprocess.CompletedProcess[str], float | None]:
+    """Run inference and sample the direct process peak working set on Windows."""
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
+    peak_bytes = 0
+    stop = threading.Event()
+
+    def monitor() -> None:
+        nonlocal peak_bytes
+        while not stop.wait(0.2):
+            peak_bytes = max(peak_bytes, _working_set_bytes(process))
+
+    watcher = threading.Thread(target=monitor, daemon=True)
+    watcher.start()
+    stdout, stderr = process.communicate()
+    peak_bytes = max(peak_bytes, _working_set_bytes(process))
+    stop.set()
+    watcher.join(timeout=1.0)
+    completed = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+    return completed, peak_bytes / 2**20 if peak_bytes else None
+
+
+def _working_set_bytes(process: subprocess.Popen[str]) -> int:
+    if os.name != "nt" or process.poll() is not None:
+        return 0
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class Counters(ctypes.Structure):
+            _fields_ = [
+                ("cb", wintypes.DWORD),
+                ("PageFaultCount", wintypes.DWORD),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+
+        class ProcessEntry(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.c_size_t),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", wintypes.LONG),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", wintypes.WCHAR * 260),
+            ]
+
+        kernel32 = ctypes.windll.kernel32
+        kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        snapshot = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)
+        if snapshot == wintypes.HANDLE(-1).value:
+            return 0
+        parents: dict[int, int] = {}
+        entry = ProcessEntry()
+        entry.dwSize = ctypes.sizeof(entry)
+        available = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+        while available:
+            parents[int(entry.th32ProcessID)] = int(entry.th32ParentProcessID)
+            available = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+        kernel32.CloseHandle(snapshot)
+        family = {int(process.pid)}
+        changed = True
+        while changed:
+            before = len(family)
+            family.update(pid for pid, parent in parents.items() if parent in family)
+            changed = len(family) != before
+
+        total = 0
+        for pid in family:
+            handle = kernel32.OpenProcess(0x1010, False, pid)
+            if not handle:
+                continue
+            counters = Counters()
+            counters.cb = ctypes.sizeof(counters)
+            if ctypes.windll.psapi.GetProcessMemoryInfo(
+                handle, ctypes.byref(counters), counters.cb
+            ):
+                total += int(counters.WorkingSetSize)
+            kernel32.CloseHandle(handle)
+        return total
+    except (AttributeError, OSError, TypeError, ValueError):
+        return 0
+    return 0
 
 
 def _discover_predict_command() -> str:

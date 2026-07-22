@@ -107,7 +107,7 @@ class FakeBackend:
         )
 
 
-def test_companion_mask_bypasses_inference_backend(tmp_path: Path) -> None:
+def test_companion_mask_is_not_used_as_prediction(tmp_path: Path) -> None:
     root = tmp_path / "dataset"
     ct_dir = root / "rawdata" / "sub-test"
     mask_dir = root / "derivatives" / "sub-test"
@@ -128,9 +128,9 @@ def test_companion_mask_bypasses_inference_backend(tmp_path: Path) -> None:
         progress=lambda _value, message: updates.append(message),
     )
 
-    assert backend.calls == 0
-    assert case.labels == (20,)
-    assert "Using companion mask" in updates
+    assert backend.calls == 1
+    assert case.labels == (28,)
+    assert "Running segmentation" in updates
 
 
 def test_missing_companion_uses_backend_and_existing_mesh_pipeline(
@@ -159,10 +159,31 @@ def test_missing_companion_uses_backend_and_existing_mesh_pipeline(
     assert backend.calls == 1
     assert first.labels == (28,)
     assert second.labels == (28,)
-    assert "Running pretrained nnU-Net model" in updates
+    assert "Running segmentation" in updates
     assert "Running vertebra segmentation" in updates
-    assert "Using cached prediction" in cached_updates
+    assert "Cached prediction" in cached_updates
     assert list((tmp_path / "cache").glob("*.nii.gz"))
+
+
+def test_ground_truth_is_evaluation_only(tmp_path: Path) -> None:
+    ct_path, data, affine = write_ct(tmp_path / "scan_ct.nii.gz")
+    reference_path = tmp_path / "reference.nii.gz"
+    nib.save(nib.Nifti1Image(labelled_mask(data.shape, 28), affine), reference_path)
+    backend = FakeBackend(affine, data.shape)
+
+    case = load_case_for_ct(
+        ct_path,
+        reference_path,
+        backend=backend,
+        cache_dir=tmp_path / "cache",
+        sample_step=1,
+    )
+
+    assert backend.calls == 1
+    assert case.mask_path.parent == tmp_path / "cache"
+    assert case.dice == pytest.approx(1.0)
+    assert case.iou == pytest.approx(1.0)
+    assert case.hd95_mm == pytest.approx(0.0)
 
 
 def test_backend_unavailable_has_clear_error(tmp_path: Path) -> None:

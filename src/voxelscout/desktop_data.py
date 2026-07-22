@@ -56,6 +56,13 @@ class SegmentedCase:
     spacing: tuple[float, float, float]
     orientation: str
     meshes: tuple[VertebraMesh, ...]
+    model_name: str = "Unknown"
+    segmentation_status: str = "Complete"
+    inference_time_seconds: float | None = None
+    peak_memory_mib: float | None = None
+    dice: float | None = None
+    iou: float | None = None
+    hd95_mm: float | None = None
 
     @property
     def labels(self) -> tuple[int, ...]:
@@ -138,6 +145,7 @@ def _build_cache_key(
     segmentation: SegmentationVolume,
     sample_step: int,
     target_faces: int,
+    metadata: tuple[object, ...] = (),
 ) -> tuple[object, ...]:
     ct_path = Path(ct.source_path).resolve()
     ct_stat = ct_path.stat()
@@ -159,6 +167,7 @@ def _build_cache_key(
         *segmentation_identity,
         int(sample_step),
         int(target_faces),
+        *metadata,
     )
 
 
@@ -312,6 +321,13 @@ def build_segmented_case(
     sample_step: int = 2,
     target_faces_per_vertebra: int = 12_000,
     progress: ProgressCallback | None = None,
+    model_name: str = "Unknown",
+    segmentation_status: str = "Complete",
+    inference_time_seconds: float | None = None,
+    peak_memory_mib: float | None = None,
+    dice: float | None = None,
+    iou: float | None = None,
+    hd95_mm: float | None = None,
 ) -> SegmentedCase:
     """Validate in-memory volumes and build one cached mesh per vertebra label."""
     report = progress or (lambda _value, _message: None)
@@ -328,7 +344,19 @@ def build_segmented_case(
         raise ValueError("CT and segmentation do not use the same spatial coordinates")
 
     key = _build_cache_key(
-        ct, segmentation, sample_step, target_faces_per_vertebra
+        ct,
+        segmentation,
+        sample_step,
+        target_faces_per_vertebra,
+        (
+            model_name,
+            segmentation_status,
+            inference_time_seconds,
+            peak_memory_mib,
+            dice,
+            iou,
+            hd95_mm,
+        ),
     )
     with _CACHE_LOCK:
         cached = _CASE_CACHE.get(key)
@@ -383,6 +411,13 @@ def build_segmented_case(
         spacing=spacing,
         orientation=orientation,
         meshes=tuple(meshes),
+        model_name=model_name,
+        segmentation_status=segmentation_status,
+        inference_time_seconds=inference_time_seconds,
+        peak_memory_mib=peak_memory_mib,
+        dice=dice,
+        iou=iou,
+        hd95_mm=hd95_mm,
     )
     with _CACHE_LOCK:
         _CASE_CACHE[key] = result
