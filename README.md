@@ -21,7 +21,6 @@ The Windows application deliberately focuses on one workflow:
 3. Rotate, zoom, and pan the coloured 3D spine.
 4. Hover to see the vertebra code, anatomical name, and spinal region.
 5. Click a vertebra to keep it highlighted and show a short explanation.
-6. Export the current 3D camera view as a PNG.
 
 ## Run
 
@@ -146,9 +145,14 @@ reuse the cached prediction.
 
 ## Display-only CT review
 
-After a case loads, `Review CT` opens a separate axial before/after window. This
-tool reads the existing CT but never writes it and is not connected to the
-nnU-Net command, prediction cache, segmentation, or mesh inputs.
+After a case loads, `Review CT` opens a separate axial before/after window. It
+reads the existing CT and segmentation for display but never writes them or
+changes the nnU-Net command, prediction cache, segmentation, or mesh inputs.
+
+When a labelled vertebra is selected in 3D, Review CT opens at that vertebra's
+centre slice and overlays its segmentation outline. A compact vertebra selector
+keeps the 2D view and 3D highlight synchronized; overlay visibility and opacity
+are display-only controls.
 
 The default review uses deterministic 0.5th/99.5th percentile automatic
 windowing after display-only clipping to `-1024…3071 HU`. The window follows the

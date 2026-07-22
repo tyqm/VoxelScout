@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import nibabel as nib
@@ -25,6 +26,8 @@ from voxelscout.ct_display import (
     inspect_hu,
     render_ct_slice,
 )
+from voxelscout.anatomy import vertebra_info
+from voxelscout.ct_overlay import blend_vertebra_overlay, label_centres
 from voxelscout.spatial_guides import (
     axial_edge_labels,
     format_scale_length,
@@ -170,18 +173,46 @@ class ParameterSlider(QWidget):
 class CTReviewDialog(QDialog):
     """Axial before/after viewer whose transforms never leave this window."""
 
-    def __init__(self, ct_path: Path, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        ct_path: Path,
+        parent: QWidget | None = None,
+        *,
+        mask_path: Path | None = None,
+        selected_label: int | None = None,
+        on_label_selected: Callable[[int | None], None] | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Lenx — Review CT")
-        image = nib.as_closest_canonical(nib.load(str(Path(ct_path).resolve())))
+        source_image = nib.load(str(Path(ct_path).resolve()))
+        image = nib.as_closest_canonical(source_image)
         if len(image.shape) != 3:
             raise ValueError(f"Expected a 3D CT volume, got shape {image.shape}")
         self._volume = np.asanyarray(image.dataobj)
         self._orientation = tuple(str(code) for code in nib.aff2axcodes(image.affine))
         self._spacing = tuple(float(value) for value in image.header.get_zooms()[:3])
+        self._mask: np.ndarray | None = None
+        if mask_path is not None:
+            source_mask = nib.load(str(Path(mask_path).resolve()))
+            if source_mask.shape != source_image.shape or not np.allclose(
+                source_mask.affine, source_image.affine, atol=1e-3, rtol=1e-5
+            ):
+                raise ValueError("CT and segmentation do not use the same geometry")
+            canonical_mask = nib.as_closest_canonical(source_mask)
+            if canonical_mask.shape != image.shape or not np.allclose(
+                canonical_mask.affine, image.affine, atol=1e-3, rtol=1e-5
+            ):
+                raise ValueError("Canonical CT and segmentation geometry do not match")
+            self._mask = np.asarray(np.rint(canonical_mask.dataobj), dtype=np.int16)
+        self._label_centres = label_centres(self._mask) if self._mask is not None else {}
+        self._selected_label = (
+            int(selected_label) if selected_label in self._label_centres else None
+        )
+        self._on_label_selected = on_label_selected
         self._report = inspect_hu(self._volume)
         center, width = automatic_window(self._volume)
         self._build_ui(center, width)
+        self.set_selected_label(self._selected_label, jump=True, notify=False)
         self.setFixedSize(self.minimumSizeHint())
         self._update_controls()
         self._render()
@@ -206,6 +237,20 @@ class CTReviewDialog(QDialog):
         layout.addLayout(slice_row)
 
         options = QHBoxLayout()
+        options.addWidget(QLabel("Vertebra"))
+        self.vertebra = QComboBox()
+        self.vertebra.addItem("All", None)
+        for label in sorted(self._label_centres):
+            self.vertebra.addItem(vertebra_info(label).code, label)
+        self.vertebra.setEnabled(bool(self._label_centres))
+        self.vertebra.currentIndexChanged.connect(self._on_vertebra_changed)
+        options.addWidget(self.vertebra)
+        self.overlay = QCheckBox("Overlay")
+        self.overlay.setChecked(self._mask is not None)
+        self.overlay.setEnabled(self._mask is not None)
+        self.overlay.toggled.connect(self._update_controls)
+        options.addWidget(self.overlay)
+        options.addSpacing(10)
         self.auto_window = QCheckBox("Auto window")
         self.auto_window.setChecked(True)
         self.auto_window.toggled.connect(self._update_controls)
@@ -237,12 +282,16 @@ class CTReviewDialog(QDialog):
         self.clahe_limit = ParameterSlider(
             "CLAHE", 0.001, 0.2, 0.01, 0.005, decimals=3
         )
+        self.overlay_opacity = ParameterSlider(
+            "Overlay", 0.1, 0.9, 0.5, 0.05, decimals=2
+        )
         for control in (
             self.center,
             self.width,
             self.gamma,
             self.sigmoid_gain,
             self.clahe_limit,
+            self.overlay_opacity,
         ):
             sliders.addWidget(control)
         sliders.addStretch(1)
@@ -263,6 +312,7 @@ class CTReviewDialog(QDialog):
             self.gamma,
             self.sigmoid_gain,
             self.clahe_limit,
+            self.overlay_opacity,
         ):
             widget.valueChanged.connect(self._render)
 
@@ -294,7 +344,32 @@ class CTReviewDialog(QDialog):
         self.gamma.setEnabled(self.transform.currentText() == "Gamma")
         self.sigmoid_gain.setEnabled(self.transform.currentText() == "Sigmoid")
         self.clahe_limit.setEnabled(self.clahe.isChecked())
+        self.overlay_opacity.setEnabled(self.overlay.isChecked())
         self._render()
+
+    def set_selected_label(
+        self,
+        label: int | None,
+        *,
+        jump: bool,
+        notify: bool,
+    ) -> None:
+        selected = int(label) if label in self._label_centres else None
+        self._selected_label = selected
+        index = self.vertebra.findData(selected)
+        self.vertebra.blockSignals(True)
+        self.vertebra.setCurrentIndex(max(0, index))
+        self.vertebra.blockSignals(False)
+        if jump and selected is not None:
+            self.slice_slider.setValue(self._label_centres[selected])
+        self._render()
+        if notify and self._on_label_selected is not None:
+            self._on_label_selected(selected)
+
+    def _on_vertebra_changed(self, _index: int) -> None:
+        self.set_selected_label(
+            self.vertebra.currentData(), jump=True, notify=True
+        )
 
     def _render(self, *_args: object) -> None:
         if not hasattr(self, "before"):
@@ -305,18 +380,34 @@ class CTReviewDialog(QDialog):
         settings = self._settings()
         before = render_ct_slice(axial, settings.before_settings())
         after = render_ct_slice(axial, settings)
+        if self._mask is not None and self.overlay.isChecked():
+            labels = self._mask[:, :, index]
+            opacity = self.overlay_opacity.value()
+            before = blend_vertebra_overlay(
+                before, labels, self._selected_label, opacity
+            )
+            after = blend_vertebra_overlay(
+                after, labels, self._selected_label, opacity
+            )
         self._set_image(self.before[1], before)
         self._set_image(self.after[1], after)
 
     @staticmethod
     def _set_image(label: CTImageView, pixels: np.ndarray) -> None:
-        display = np.ascontiguousarray(np.flipud(pixels.T))
+        if pixels.ndim == 2:
+            display = np.ascontiguousarray(np.flipud(pixels.T))
+            image_format = QImage.Format.Format_Grayscale8
+        else:
+            display = np.ascontiguousarray(
+                np.flipud(np.transpose(pixels, (1, 0, 2)))
+            )
+            image_format = QImage.Format.Format_RGB888
         image = QImage(
             display.data,
             display.shape[1],
             display.shape[0],
             display.strides[0],
-            QImage.Format.Format_Grayscale8,
+            image_format,
         ).copy()
         label.set_ct_image(image, pixels.shape[0])
 

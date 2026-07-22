@@ -279,7 +279,6 @@ class LenxWindow(QMainWindow):
         self._last_pick_at = 0.0
         self._load_thread: QThread | None = None
         self._load_worker: CaseLoader | None = None
-        self._auto_rotation_paused = False
         self._zoom_limits: tuple[float, float] | None = None
         self._pan_limits: tuple[np.ndarray, np.ndarray] | None = None
         self._review_window: CTReviewDialog | None = None
@@ -330,19 +329,36 @@ class LenxWindow(QMainWindow):
         self.reset_button.clicked.connect(self.reset_camera)
         controls_layout.addWidget(self.reset_button)
 
-        self.export_button = QPushButton("Export")
-        self.export_button.setObjectName("blueButton")
-        self.export_button.setFixedHeight(40)
-        self.export_button.setEnabled(False)
-        self.export_button.clicked.connect(self.export_image)
-        controls_layout.addWidget(self.export_button)
-
         self.review_button = QPushButton("Review CT")
         self.review_button.setObjectName("purpleButton")
         self.review_button.setFixedHeight(40)
         self.review_button.setEnabled(False)
         self.review_button.clicked.connect(self.review_ct)
         controls_layout.addWidget(self.review_button)
+
+        appearance_title = QLabel("Appearance")
+        appearance_title.setObjectName("appearanceTitle")
+        controls_layout.addWidget(appearance_title)
+        self.appearance_dial = AppearanceDial()
+        self.appearance_dial.setObjectName("appearanceDial")
+        self.appearance_dial.setAccessibleName("Appearance preset")
+        self.appearance_dial.setValue(tuple(AppearanceMode).index(self.appearance_mode))
+        self.appearance_dial.valueChanged.connect(self._set_appearance_mode)
+        controls_layout.addWidget(
+            self.appearance_dial, 0, Qt.AlignmentFlag.AlignHCenter
+        )
+        dial_labels_widget = QWidget()
+        dial_labels_widget.setFixedWidth(150)
+        dial_labels = QHBoxLayout(dial_labels_widget)
+        dial_labels.setContentsMargins(0, 0, 0, 0)
+        for text in ("Natural", "Regions", "Labels"):
+            label = QLabel(text)
+            label.setObjectName("dialLabel")
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            dial_labels.addWidget(label, 1)
+        controls_layout.addWidget(
+            dial_labels_widget, 0, Qt.AlignmentFlag.AlignHCenter
+        )
 
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
@@ -362,30 +378,6 @@ class LenxWindow(QMainWindow):
         info_layout = QVBoxLayout(info_panel)
         info_layout.setContentsMargins(18, 18, 18, 18)
         info_layout.setSpacing(8)
-        appearance_title = QLabel("Appearance")
-        appearance_title.setObjectName("appearanceTitle")
-        info_layout.addWidget(appearance_title)
-        info_layout.addSpacing(22)
-        self.appearance_dial = AppearanceDial()
-        self.appearance_dial.setObjectName("appearanceDial")
-        self.appearance_dial.setAccessibleName("Appearance preset")
-        self.appearance_dial.setValue(tuple(AppearanceMode).index(self.appearance_mode))
-        self.appearance_dial.valueChanged.connect(self._set_appearance_mode)
-        info_layout.addWidget(
-            self.appearance_dial, 0, Qt.AlignmentFlag.AlignHCenter
-        )
-        dial_labels_widget = QWidget()
-        dial_labels_widget.setFixedWidth(150)
-        dial_labels = QHBoxLayout(dial_labels_widget)
-        dial_labels.setContentsMargins(0, 0, 0, 0)
-        for text in ("Natural", "Regions", "Labels"):
-            label = QLabel(text)
-            label.setObjectName("dialLabel")
-            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            dial_labels.addWidget(label, 1)
-        info_layout.addWidget(
-            dial_labels_widget, 0, Qt.AlignmentFlag.AlignHCenter
-        )
         info_layout.addStretch(1)
         sidebar_layout.addWidget(info_panel, 1)
         content_layout.addWidget(sidebar)
@@ -447,13 +439,10 @@ class LenxWindow(QMainWindow):
                        border-radius: 6px; padding: 7px 12px; font-weight: 600; }}
         QPushButton#redButton {{ background: #ef476f; border: none; color: white; }}
         QPushButton#yellowButton {{ background: #ffd166; border: none; color: #0d1926; }}
-        QPushButton#blueButton {{ background: #3a86ff; border: none; color: white; }}
         QPushButton#purpleButton {{ background: #9b5de5; border: none; color: white; }}
         QPushButton#redButton:hover, QPushButton#yellowButton:hover,
-        QPushButton#blueButton:hover {{ border: 2px solid rgba(255, 255, 255, 150); }}
         QPushButton#purpleButton:hover {{ border: 2px solid rgba(255, 255, 255, 150); }}
         QPushButton#redButton:disabled, QPushButton#yellowButton:disabled,
-        QPushButton#blueButton:disabled {{ color: #68798a; background: #1b2a38; }}
         QPushButton#purpleButton:disabled {{ color: #68798a; background: #1b2a38; }}
         QProgressBar {{ color: {TEXT}; background: #0b1520; border: 1px solid #294159;
                         border-radius: 5px; text-align: center; height: 18px; }}
@@ -504,8 +493,6 @@ class LenxWindow(QMainWindow):
         self._clamp_zoom()
         self._clamp_pan()
         self._update_3d_scale()
-        if self._auto_rotation_paused:
-            return
         viewport = self.plotter.interactor
         hovered_widget = QApplication.widgetAt(QCursor.pos())
         if hovered_widget is viewport or (
@@ -630,7 +617,6 @@ class LenxWindow(QMainWindow):
         if self._load_thread is not None and self._load_thread.isRunning():
             return
         self.open_button.setEnabled(False)
-        self.export_button.setEnabled(False)
         self.reset_button.setEnabled(False)
         self.review_button.setEnabled(False)
         self.progress.setValue(0)
@@ -668,7 +654,6 @@ class LenxWindow(QMainWindow):
         self.progress.hide()
         self.status_label.hide()
         self.open_button.setEnabled(True)
-        self.export_button.setEnabled(True)
         self.reset_button.setEnabled(True)
         self.review_button.setEnabled(True)
         self._populate_scene(case)
@@ -679,7 +664,6 @@ class LenxWindow(QMainWindow):
         self.progress.hide()
         self.status_label.hide()
         self.open_button.setEnabled(True)
-        self.export_button.setEnabled(self.case is not None)
         self.reset_button.setEnabled(self.case is not None)
         self.review_button.setEnabled(self.case is not None)
         QMessageBox.critical(self, "Unable to open case", message)
@@ -804,6 +788,13 @@ class LenxWindow(QMainWindow):
         self.pill_region.setText(info.region_plain)
         self.info_pill.adjustSize()
         self._position_info_pill()
+        if self._review_window is not None and self._review_window.isVisible():
+            self.info_pill.hide()
+            if not temporary:
+                self._review_window.set_selected_label(
+                    label, jump=True, notify=False
+                )
+            return
         self.info_pill.show()
         self.info_pill.raise_()
 
@@ -822,6 +813,7 @@ class LenxWindow(QMainWindow):
         if previous is not None and previous != label:
             self._refresh_actor(previous)
         if label is not None:
+            self._refresh_actor(label)
             self._display_info(label, temporary=False)
             return
         self.info_pill.hide()
@@ -862,38 +854,24 @@ class LenxWindow(QMainWindow):
         self.plotter.render()
 
     @Slot()
-    def export_image(self) -> None:
-        if self.case is None:
-            return
-        self._auto_rotation_paused = True
-        try:
-            default = f"{self.case.name}_3d_spine.png"
-            filename, _ = QFileDialog.getSaveFileName(
-                self,
-                "Export current 3D view",
-                str(Path.cwd() / default),
-                "PNG image (*.png)",
-            )
-            if not filename:
-                return
-            self.plotter.screenshot(filename, transparent_background=False)
-        except Exception as error:
-            QMessageBox.critical(self, "Export failed", str(error))
-        finally:
-            self._auto_rotation_paused = False
-
-    @Slot()
     def review_ct(self) -> None:
         if self.case is None:
             return
         try:
             self.scale_bar.hide()
+            self.info_pill.hide()
             if self._review_window is not None:
                 self._review_window.showNormal()
                 self._review_window.raise_()
                 self._review_window.activateWindow()
                 return
-            self._review_window = CTReviewDialog(self.case.ct_path, self)
+            self._review_window = CTReviewDialog(
+                self.case.ct_path,
+                self,
+                mask_path=self.case.mask_path,
+                selected_label=self.selected_label,
+                on_label_selected=self._select_from_review,
+            )
             self._review_window.finished.connect(self._on_review_closed)
             self._review_window.show()
             self._review_window.raise_()
@@ -905,6 +883,14 @@ class LenxWindow(QMainWindow):
     def _on_review_closed(self, _result: int) -> None:
         self._review_window = None
         self._update_3d_scale()
+        if self.selected_label is not None:
+            self._display_info(self.selected_label, temporary=False)
+
+    def _select_from_review(self, label: int | None) -> None:
+        if label is not None and label not in self.label_actors:
+            return
+        self._set_selected(label)
+        self.plotter.render()
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt API
         self._rotation_timer.stop()
