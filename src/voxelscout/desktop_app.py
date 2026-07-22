@@ -33,7 +33,6 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
-    QProgressBar,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -59,7 +58,6 @@ PANEL = "#111e2b"
 PANEL_ALT = "#162738"
 TEXT = "#edf4fa"
 MUTED = "#91a4b7"
-ACCENT = "#31c4b3"
 GOLD = "#f4c95d"
 HOVER = "#65d9ff"
 
@@ -351,25 +349,11 @@ class LenxWindow(QMainWindow):
         dial_labels_widget.setFixedWidth(150)
         dial_labels = QHBoxLayout(dial_labels_widget)
         dial_labels.setContentsMargins(0, 0, 0, 0)
-        for text in ("Natural", "Regions", "Labels"):
-            label = QLabel(text)
-            label.setObjectName("dialLabel")
-            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            dial_labels.addWidget(label, 1)
+
         controls_layout.addWidget(
             dial_labels_widget, 0, Qt.AlignmentFlag.AlignHCenter
         )
 
-        self.progress = QProgressBar()
-        self.progress.setRange(0, 100)
-        self.progress.setFixedHeight(16)
-        self.progress.hide()
-        controls_layout.addWidget(self.progress)
-        self.status_label = QLabel("")
-        self.status_label.setObjectName("statusLabel")
-        self.status_label.setWordWrap(True)
-        self.status_label.hide()
-        controls_layout.addWidget(self.status_label)
         controls_layout.addStretch(1)
         sidebar_layout.addWidget(controls_panel, 1)
 
@@ -444,9 +428,6 @@ class LenxWindow(QMainWindow):
         QPushButton#purpleButton:hover {{ border: 2px solid rgba(255, 255, 255, 150); }}
         QPushButton#redButton:disabled, QPushButton#yellowButton:disabled,
         QPushButton#purpleButton:disabled {{ color: #68798a; background: #1b2a38; }}
-        QProgressBar {{ color: {TEXT}; background: #0b1520; border: 1px solid #294159;
-                        border-radius: 5px; text-align: center; height: 18px; }}
-        QProgressBar::chunk {{ background: {ACCENT}; border-radius: 4px; }}
         QFrame#controlsPanel, QFrame#infoPanel {{ background: {PANEL};
             border: 1px solid #203447; border-radius: 8px; }}
         QFrame#viewerFrame {{ background: #050a10; border: 1px solid #203447; border-radius: 8px; }}
@@ -454,7 +435,6 @@ class LenxWindow(QMainWindow):
         QLabel#pillCode {{ color: #252a34; font-size: 15px; font-weight: 700; }}
         QLabel#pillName {{ color: #3e4552; font-size: 13px; font-weight: 600; }}
         QLabel#pillRegion {{ color: #747d8c; font-size: 12px; font-weight: 500; }}
-        QLabel#statusLabel {{ color: {MUTED}; font-size: 11px; }}
         QLabel#appearanceTitle {{ color: {MUTED}; font-size: 12px; font-weight: 600; }}
         QLabel#dialLabel {{ color: #93a4b5; font-size: 9px; }}
         """
@@ -582,17 +562,17 @@ class LenxWindow(QMainWindow):
         )
         if not folder_name:
             return
-        self.status_label.setText("Reading DICOM series")
-        self.status_label.show()
+        self._show_loading_pill(0, "Reading DICOM series")
         QApplication.processEvents()
         try:
             candidates = discover_ct_series(Path(folder_name))
         except Exception as error:
-            self.status_label.hide()
+            self.info_pill.hide()
             QMessageBox.critical(self, "Unable to open DICOM", str(error))
             return
         selected = candidates[0]
         if len(candidates) > 1:
+            self.info_pill.hide()
             choices = [candidate.display_name for candidate in candidates]
             choice, accepted = QInputDialog.getItem(
                 self,
@@ -603,7 +583,7 @@ class LenxWindow(QMainWindow):
                 False,
             )
             if not accepted:
-                self.status_label.hide()
+                self.info_pill.hide()
                 return
             selected = candidates[choices.index(choice)]
         self._start_loading(selected.directory, dicom_series=selected)
@@ -616,13 +596,13 @@ class LenxWindow(QMainWindow):
     ) -> None:
         if self._load_thread is not None and self._load_thread.isRunning():
             return
+        if self._review_window is not None:
+            self._review_window.close()
+            self._review_window = None
         self.open_button.setEnabled(False)
         self.reset_button.setEnabled(False)
         self.review_button.setEnabled(False)
-        self.progress.setValue(0)
-        self.progress.show()
-        self.status_label.setText("Reading CT")
-        self.status_label.show()
+        self._show_loading_pill(0, "Reading CT")
 
         thread = QThread(self)
         worker = CaseLoader(ct_path, mask_path, self._backend, dicom_series)
@@ -642,8 +622,7 @@ class LenxWindow(QMainWindow):
 
     @Slot(int, str)
     def _on_progress(self, value: int, message: str) -> None:
-        self.progress.setValue(value)
-        self.status_label.setText(message)
+        self._show_loading_pill(value, message)
 
     @Slot(object)
     def _on_case_loaded(self, case: SegmentedCase) -> None:
@@ -651,8 +630,7 @@ class LenxWindow(QMainWindow):
             self._review_window.close()
             self._review_window = None
         self.case = case
-        self.progress.hide()
-        self.status_label.hide()
+        self.info_pill.hide()
         self.open_button.setEnabled(True)
         self.reset_button.setEnabled(True)
         self.review_button.setEnabled(True)
@@ -661,8 +639,7 @@ class LenxWindow(QMainWindow):
 
     @Slot(str)
     def _on_load_failed(self, message: str) -> None:
-        self.progress.hide()
-        self.status_label.hide()
+        self.info_pill.hide()
         self.open_button.setEnabled(True)
         self.reset_button.setEnabled(self.case is not None)
         self.review_button.setEnabled(self.case is not None)
@@ -795,6 +772,15 @@ class LenxWindow(QMainWindow):
                     label, jump=True, notify=False
                 )
             return
+        self.info_pill.show()
+        self.info_pill.raise_()
+
+    def _show_loading_pill(self, value: int, message: str) -> None:
+        self.pill_code.setText("Loading")
+        self.pill_name.setText(message)
+        self.pill_region.setText(f"{min(100, max(0, int(value)))}%")
+        self.info_pill.adjustSize()
+        self._position_info_pill()
         self.info_pill.show()
         self.info_pill.raise_()
 
