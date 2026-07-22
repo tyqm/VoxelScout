@@ -6,14 +6,12 @@ from pathlib import Path
 
 import nibabel as nib
 import numpy as np
-from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
-    QDoubleSpinBox,
-    QFormLayout,
     QHBoxLayout,
     QLabel,
     QSlider,
@@ -105,6 +103,70 @@ class CTImageView(QLabel):
         painter.drawText(QPointF(x, y), text)
 
 
+class ParameterSlider(QWidget):
+    """A compact vertical slider with a readable live value."""
+
+    valueChanged = Signal(float)
+
+    def __init__(
+        self,
+        title: str,
+        minimum: float,
+        maximum: float,
+        value: float,
+        step: float,
+        *,
+        decimals: int = 1,
+        suffix: str = "",
+    ) -> None:
+        super().__init__()
+        self._minimum = minimum
+        self._maximum = maximum
+        self._step = step
+        self._decimals = decimals
+        self._suffix = suffix
+        count = max(1, round((maximum - minimum) / step))
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(5, 2, 5, 2)
+        layout.setSpacing(3)
+        heading = QLabel(title)
+        heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(heading)
+        self.slider = QSlider(Qt.Orientation.Vertical)
+        self.slider.setRange(0, count)
+        self.slider.setFixedHeight(105)
+        self.slider.setTickPosition(QSlider.TickPosition.TicksBothSides)
+        layout.addWidget(self.slider, 1, Qt.AlignmentFlag.AlignHCenter)
+        self.value_label = QLabel()
+        self.value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.value_label.setMinimumWidth(74)
+        layout.addWidget(self.value_label)
+        self.slider.valueChanged.connect(self._emit_value)
+        self.setValue(value)
+
+    def value(self) -> float:
+        raw = self._minimum + self.slider.value() * self._step
+        return min(self._maximum, round(raw, self._decimals))
+
+    def setValue(self, value: float) -> None:  # noqa: N802 - Qt API style
+        clamped = min(max(float(value), self._minimum), self._maximum)
+        self.slider.setValue(round((clamped - self._minimum) / self._step))
+        self._update_value_label()
+
+    def setEnabled(self, enabled: bool) -> None:  # noqa: N802 - Qt API style
+        super().setEnabled(enabled)
+        self.slider.setEnabled(enabled)
+
+    def _emit_value(self, _position: int) -> None:
+        self._update_value_label()
+        self.valueChanged.emit(self.value())
+
+    def _update_value_label(self) -> None:
+        value = f"{self.value():.{self._decimals}f}"
+        self.value_label.setText(f"{value}{self._suffix}")
+
+
 class CTReviewDialog(QDialog):
     """Axial before/after viewer whose transforms never leave this window."""
 
@@ -143,39 +205,48 @@ class CTReviewDialog(QDialog):
         slice_row.addWidget(self.slice_position)
         layout.addLayout(slice_row)
 
-        controls = QHBoxLayout()
-        window_form = QFormLayout()
+        options = QHBoxLayout()
         self.auto_window = QCheckBox("Auto window")
         self.auto_window.setChecked(True)
         self.auto_window.toggled.connect(self._update_controls)
-        window_form.addRow(self.auto_window)
-        self.center = self._spin(-10000, 10000, center, 10)
-        self.width = self._spin(1, 20000, width, 10)
-        window_form.addRow("Center", self.center)
-        window_form.addRow("Width", self.width)
+        options.addWidget(self.auto_window)
         self.clip = QCheckBox("Clip −1024…3071 HU")
         self.clip.setChecked(True)
         self.clip.toggled.connect(self._render)
-        window_form.addRow(self.clip)
-        controls.addLayout(window_form)
-
-        transform_form = QFormLayout()
+        options.addWidget(self.clip)
+        options.addSpacing(14)
+        options.addWidget(QLabel("Transform"))
         self.transform = QComboBox()
         self.transform.addItems(("None", "Gamma", "Sigmoid"))
         self.transform.currentTextChanged.connect(self._update_controls)
-        transform_form.addRow("Transform", self.transform)
-        self.gamma = self._spin(0.1, 4.0, 0.8, 0.1)
-        transform_form.addRow("Gamma", self.gamma)
-        self.sigmoid_gain = self._spin(0.1, 30.0, 8.0, 0.5)
-        transform_form.addRow("Sigmoid gain", self.sigmoid_gain)
+        options.addWidget(self.transform)
+        options.addSpacing(14)
         self.clahe = QCheckBox("CLAHE")
         self.clahe.toggled.connect(self._update_controls)
-        transform_form.addRow(self.clahe)
-        self.clahe_limit = self._spin(0.001, 0.2, 0.01, 0.005, decimals=3)
-        transform_form.addRow("CLAHE limit", self.clahe_limit)
-        controls.addLayout(transform_form)
-        controls.addStretch(1)
-        layout.addLayout(controls)
+        options.addWidget(self.clahe)
+        options.addStretch(1)
+        layout.addLayout(options)
+
+        sliders = QHBoxLayout()
+        sliders.setSpacing(12)
+        sliders.addStretch(1)
+        self.center = ParameterSlider("Center", -10000, 10000, center, 10, suffix=" HU")
+        self.width = ParameterSlider("Width", 1, 20000, width, 10, suffix=" HU")
+        self.gamma = ParameterSlider("Gamma", 0.1, 4.0, 0.8, 0.1)
+        self.sigmoid_gain = ParameterSlider("Sigmoid", 0.1, 30.0, 8.0, 0.5)
+        self.clahe_limit = ParameterSlider(
+            "CLAHE", 0.001, 0.2, 0.01, 0.005, decimals=3
+        )
+        for control in (
+            self.center,
+            self.width,
+            self.gamma,
+            self.sigmoid_gain,
+            self.clahe_limit,
+        ):
+            sliders.addWidget(control)
+        sliders.addStretch(1)
+        layout.addLayout(sliders)
 
         report = self._report
         self.summary = QLabel(
@@ -204,22 +275,6 @@ class CTReviewDialog(QDialog):
         layout.addWidget(heading)
         layout.addWidget(view, 1)
         return panel, view
-
-    @staticmethod
-    def _spin(
-        minimum: float,
-        maximum: float,
-        value: float,
-        step: float,
-        *,
-        decimals: int = 1,
-    ) -> QDoubleSpinBox:
-        spin = QDoubleSpinBox()
-        spin.setRange(minimum, maximum)
-        spin.setDecimals(decimals)
-        spin.setSingleStep(step)
-        spin.setValue(value)
-        return spin
 
     def _settings(self) -> DisplaySettings:
         return DisplaySettings(

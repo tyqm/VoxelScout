@@ -220,6 +220,7 @@ class LenxWindow(QMainWindow):
         controls_layout.addWidget(self.export_button)
 
         self.review_button = QPushButton("Review CT")
+        self.review_button.setObjectName("purpleButton")
         self.review_button.setFixedHeight(40)
         self.review_button.setEnabled(False)
         self.review_button.clicked.connect(self.review_ct)
@@ -330,10 +331,13 @@ class LenxWindow(QMainWindow):
         QPushButton#redButton {{ background: #ef476f; border: none; color: white; }}
         QPushButton#yellowButton {{ background: #ffd166; border: none; color: #0d1926; }}
         QPushButton#blueButton {{ background: #3a86ff; border: none; color: white; }}
+        QPushButton#purpleButton {{ background: #9b5de5; border: none; color: white; }}
         QPushButton#redButton:hover, QPushButton#yellowButton:hover,
         QPushButton#blueButton:hover {{ border: 2px solid rgba(255, 255, 255, 150); }}
+        QPushButton#purpleButton:hover {{ border: 2px solid rgba(255, 255, 255, 150); }}
         QPushButton#redButton:disabled, QPushButton#yellowButton:disabled,
         QPushButton#blueButton:disabled {{ color: #68798a; background: #1b2a38; }}
+        QPushButton#purpleButton:disabled {{ color: #68798a; background: #1b2a38; }}
         QProgressBar {{ color: {TEXT}; background: #0b1520; border: 1px solid #294159;
                         border-radius: 5px; text-align: center; height: 18px; }}
         QProgressBar::chunk {{ background: {ACCENT}; border-radius: 4px; }}
